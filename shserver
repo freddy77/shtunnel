@@ -1,3 +1,4 @@
 #!/bin/sh
+export LANG=C
 exec shtunnel --server --shell bash
 
