@@ -1,25 +1,25 @@
 This program was written to provide -L and -R like options in ssh(1) for
 normal shell.
 
-If use a client program and a server program (just same program with
-different options) to provide this possibility.
+It use a client program and a server program (just same program with different
+options) to provide this feature.
 
-Client program (launched from yuor machine) launch a ssh to your server
-(you can change launched program using --shell options).
+Client program (launched from your machine) launch a ssh to your server (you
+can change launched program using --shell options).
 
 In your server launch the program with --server options, this launch a shell.
 
 Now you can do whatever you want and use your port redirected !!!
 
-For technical info see note.txt, in summary server and client detect some
+For technical info see note.txt, to sum up server and client detect some
 special format in normal flow that are threated like data from sockets or
 control informations.
 
 One of the main use it's to use in a compile farm to test some client program
-without installing server one (for example cause you can't install it
-or it's too heavy... consider a proprietary database)
+without installing server one (for example cause you can't install it or it's
+too heavy... consider a proprietary database).
 
+This program was originally written in Perl and after a while translated to C
+with additional feature (like pseudo terminals). See shtunnel and shserver
+perl file (not compatible with C version).
 
-This program was originally written in Perl and after a while translated
-to C with additional feature (like pseudo terminals).
-See shtunnel and shserver file in this directory (not compatible with C one).
