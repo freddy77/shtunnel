@@ -1,0 +1,36 @@
+#!/usr/bin/perl
+
+sub mangle
+{
+	my $in = shift;
+	my $n = length($in)*8;
+	for (my $i=$n-1; $i > 0; $i -= 8) {
+		vec($in,$n++,1) = vec($in,$i,1);
+		vec($in,$i,1) = 1;
+		vec($in,$n++,1) = 1 if (($n&7)==7);
+	}
+	vec($in,$n|7,1) = 1 if ($n & 7);
+	return $in;
+}
+
+sub demangle
+{
+	my $in = shift;
+	my $l = (7*length($in)) >> 3;
+	my $n = $l * 8;
+	for (my $i=$n-1; $i > 0; $i -= 8) {
+                vec($in,$i,1) = vec($in,$n++,1);
+                $n++ if (($n&7)==7);
+        }
+        return substr($in,0,$l);
+}
+
+foreach $c (split(''," .Aa\x92")) {
+	foreach $i (0..12) {
+		$s = $c x $i;
+		if (demangle(mangle($s)) ne $s) {
+			print "error count $i char ".unpack('C',$c)."\n";
+			exit(1);
+		}
+	}
+}
