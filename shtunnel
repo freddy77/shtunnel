@@ -351,8 +351,8 @@ sub parseControl
 				my $ch = getChannel('connected', $port) or die('No more channels');
 				# copy socket
 				debug("fileno=".fileno($channels{$och}->{accepted}));
-				$ch->{fh} = $channels{$och}->{accepted};
-				undef $channels{$och}->{accepted};
+				*{$ch->{fh}} = *{$channels{$och}->{accepted}};
+				undef *{$channels{$och}->{accepted}};
 				debug("fileno=".fileno($ch->{fh}));
 				# set connected
 				$ch->{connected} = 1;
