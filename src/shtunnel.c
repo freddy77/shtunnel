@@ -41,8 +41,15 @@ typedef enum {
 	CmdAccept,
 	CmdClose,
 	CmdShutdown,
-	CmdWindowChanged
+	CmdWindowChanged,
+	CmdBlockData
 } CommandType;
+
+typedef struct buffer {
+	uchar *ptr;
+	unsigned int len;
+	unsigned int size;
+} buffer;
 
 typedef struct channel {
 	ChannelType type;
@@ -51,8 +58,10 @@ typedef struct channel {
 	int accepted;	/* file descriptor of accepted socket */
 	int local;	/* local port */
 	int remote;	/* remote port */
-	int blocked;
-	int connected;
+	buffer buf;	/* buffer to hold data */
+	unsigned int blocked:1;	/* block read from socket to avoid dead lock */
+	unsigned int remote_blocked:1;	/* remote channel blocked */
+	unsigned int connected:1;
 	in_addr_t ip;	/* address for local listen */
 } channel;
 
@@ -74,6 +83,11 @@ static const int STDIN  = 0;
 
 #define MAX_CONTROL_LEN 260
 #define MAX_DATA_LEN 1000
+/* buffer till this size */
+#define BLOCK_DATA_LIMIT 2048
+/* unblock when buffer size it's down this limit */
+#define UNBLOCK_DATA_LIMIT 1024
+
 static uchar control[MAX_CONTROL_LEN];
 static int control_len = 0;
 
@@ -84,6 +98,7 @@ static volatile int window_changed;
 
 static void sendCommand(int fd, CommandType type, int channel, int port);
 static void check_window_change(void);
+static void write_channel_data(channel *ch, uchar *data, unsigned int len);
 
 /*
  * Logging functions
@@ -183,6 +198,53 @@ static void debug_dump(const char *msg, const void *buf, int length)
 		debug("%s", line);
 	}
 }
+/*
+ * Buffer functions
+ */
+/*
+static void buffer_init(buffer *buf)
+{
+	buf->len = buf->size = 0;
+	buf->ptr = NULL;
+}
+*/
+
+static void buffer_free(buffer *buf)
+{
+	buf->len = buf->size = 0;
+	if (buf->ptr) {
+		free(buf->ptr);
+		buf->ptr = NULL;
+	}
+}
+
+static void buffer_append(buffer *buf, const uchar *data, unsigned int len)
+{
+#define SIZE_ALIGN(s) (((s) + 127u) & ~127u)
+
+	/* silly case, no data to append */
+	if (!len)
+		return;
+
+	if (!buf->ptr) {
+		assert(buf->size == 0 && buf->len == 0);
+		buf->size = SIZE_ALIGN(len);
+		buf->ptr = (uchar*) malloc(buf->size);
+		if (!buf->ptr)
+			fatal("memory error");
+	} else {
+		unsigned int new_size = SIZE_ALIGN(buf->len + len);
+		if (new_size > buf->size) {
+			if (!(buf->ptr = (uchar*) realloc(buf->ptr, new_size)))
+				fatal("memory error");
+			buf->size = new_size;
+		}
+	}
+	memcpy(buf->ptr + buf->len, data, len);
+	buf->len += len;
+	assert(buf->len <= buf->size);
+#undef SIZE_ALIGN
+}
 
 /*
  * Mangling / unmangling data to avoid problematic characters
@@ -200,21 +262,24 @@ static unsigned int mangle(uchar* in, unsigned int len)
 	for (i = n-1; i > 0; i -= 8) {
 		SETBIT(in, n, GETBIT(in, i));
 		++n;
-		in[i/8] |= 0x80;
-		if ((n & 7) == 7) {
-			in[n/8] |= 0x80;
+		if ((n & 7) == 7)
 			++n;
-		}
 	}
-	if (n & 7)
-		in[n/8] |= 0x80;
-	return (n+7)/8;
+	n = (n+7)/8;
+	for (i = 0; i < n; ++i) {
+		in[i] &= 0x7f;
+		if (in[i] < 32)
+			in[i] |= 0x80;
+	}
+	return n;
 }
 
 static unsigned int demangle(uchar* in, unsigned char len)
 {
 	unsigned int l = (7u*len) / 8, n = l *8;
 	int i;
+	for (i = 0; i < len; ++i)
+		in[i] &= 0x7f;
 	for (i = n - 1; i > 0; i -= 8) {
 		SETBIT(in, i, GETBIT(in, n));
 		++n;
@@ -262,6 +327,15 @@ static void mywrite(int fd, const uchar *data, unsigned int len)
 		n -= res;
 		sleep(1);
 	}
+}
+
+static void dont_block(int fd)
+{
+	unsigned long blocking = 1;
+
+	/* set socket to no-blocking */
+	if (ioctl(fd, FIONBIO, &blocking) < 0)
+		fatal("ioctl: %s", strerror(errno));
 }
 
 static void sendCommand(int fd, CommandType type, int channel, int port)
@@ -313,6 +387,7 @@ static channel* getChannel(ChannelType type, int n, int fd)
 	ch->fd = fd;
 	ch->connected = 0;
 	ch->blocked = 0;
+	ch->remote_blocked = 0;
 	ch->accepted = -1;
 	ch->local = 0;
 	ch->remote = 0;
@@ -331,6 +406,7 @@ static void deleteChannel(int n)
 		close(ch->fd);
 		ch->fd = -1;
 	}
+	buffer_free(&ch->buf);
 	ch->type = Free;
 }
 
@@ -371,13 +447,19 @@ static int channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_se
 	int res;
 
 	FOREACH_CHANNEL_BEGIN
-		if (ch->type == Listen && !ch->blocked) {
+		if (ch->type == Listen && ch->accepted < 0) {
 			FD_SET(ch->fd, fds_read);
 			if (ch->fd > max_fd) max_fd = ch->fd;
 		} else if (ch->type == Connected && ch->connected) {
-			FD_SET(ch->fd, fds_read);
-			FD_SET(ch->fd, fds_error);
-			if (ch->fd > max_fd) max_fd = ch->fd;
+			if (!ch->blocked) {
+				FD_SET(ch->fd, fds_read);
+				FD_SET(ch->fd, fds_error);
+				if (ch->fd > max_fd) max_fd = ch->fd;
+			}
+			if (ch->buf.len) {
+				FD_SET(ch->fd, fds_write);
+				if (ch->fd > max_fd) max_fd = ch->fd;
+			}
 		}
 	FOREACH_CHANNEL_END
 
@@ -389,7 +471,7 @@ static int channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_se
 	}
 
 	FOREACH_CHANNEL_BEGIN
-		if (ch->type == Listen && !ch->blocked) {
+		if (ch->type == Listen && ch->accepted < 0) {
 			if (FD_ISSET(ch->fd, fds_read)) {
 				if (client) {
 					/* get a new channel to send to server */
@@ -399,6 +481,7 @@ static int channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_se
 					och->fd = accept(ch->fd, NULL, 0);
 					if (och->fd < 0)
 						fatal("accept %s", strerror(errno));
+					dont_block(och->fd);
 					if (initialized) {
 						sendCommand(WRITE, CmdConnect, och->number, ch->remote);
 					} else {
@@ -408,32 +491,33 @@ static int channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_se
 					ch->accepted = accept(ch->fd, NULL, 0);
 					if (ch->accepted < 0)
 						fatal("accept %s", strerror(errno));
-					ch->blocked = 1;
+					dont_block(ch->accepted);
 					sendCommand(STDOUT, CmdConnect, ch->number, 0);
 				}
 			}
 		} else if (ch->type == Connected && ch->connected) {
+			if (FD_ISSET(ch->fd, fds_write))
+				write_channel_data(ch, NULL, 0);
 			if (FD_ISSET(ch->fd, fds_read)) {
 				ssize_t res;
 				int out_fd = client ? WRITE : STDOUT;
 				uchar data[128 + 3];
 				unsigned int l;
 
-				do { 
+				/* we tested with select for data so this can't block and must return some data */
+				do {
 					res = read(ch->fd, data + 3, 64);
 				} while (res < 0 && errno == EINTR);
-				if (!res) {
+				if (res <= 0) {
 					/* connection closed, send close command */
 					deleteChannel(ch->number);
 					sendCommand(out_fd, CmdClose, ch->number, 0);
 				} else {
-					data[0] = magic;
-					data[1] = res + 32;
 					data[2] = ch->number;
 					l = mangle(data+2, res+1);
+					data[0] = magic;
 					data[1] = l + 32; /* 32 to avoid strange chars, just length */
-					l += 2;
-					mywrite(out_fd, data, l);
+					mywrite(out_fd, data, l + 2);
 				}
 			}
 		}
@@ -498,6 +582,58 @@ static void addRemote(const char *arg)
 /*
  * Parsing functions
  */
+static void write_channel_data(channel *ch, uchar *data, unsigned int len)
+{
+	int out_fd = client ? WRITE : STDOUT;
+
+	if (ch->buf.len) {
+		buffer_append(&ch->buf, data, len);
+		data = ch->buf.ptr;
+		len = ch->buf.len;
+	}
+	/* try to write as much data as we can */
+	while (len) {
+		ssize_t res;
+		do {
+			res = send(ch->fd, data, len, 0);
+		} while (res < 0 && errno == EINTR);
+		if (res < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				debug("some data left ch %d fd %d bytes %u", ch->number, ch->fd, len);
+				if (data != ch->buf.ptr)
+					buffer_append(&ch->buf, data, len);
+				break;
+			}
+			if (errno != EPIPE)
+				fatal("send: %s", strerror(errno));
+		} else {
+			debug("written %d (0x%x) bytes to fd %d", res, res, ch->fd);
+			debug_dump(NULL, data, res);
+			len -= res;
+			memmove(data, data + res, len);
+			if (data == ch->buf.ptr)
+				ch->buf.len = len;
+		}
+	}
+
+	/* if we reach limit send block command */
+	if (!ch->remote_blocked && ch->buf.len >= BLOCK_DATA_LIMIT) {
+		debug("blocking data arrival ch %d fd %d", ch->number, ch->fd);
+		sendCommand(out_fd, CmdBlockData, ch->number, 1);
+		ch->remote_blocked = 1;
+	}
+
+	/* if we are low the limit send unblock command */
+	if (ch->remote_blocked && ch->buf.len < UNBLOCK_DATA_LIMIT) {
+		debug("unblocking data arrival ch %d fd %d", ch->number, ch->fd);
+		sendCommand(out_fd, CmdBlockData, ch->number, 0);
+		ch->remote_blocked = 0;
+	}
+		
+	/* free buffer if unneeded */
+	if (!ch->buf.len)
+		buffer_free(&ch->buf);
+}
 
 static void parseControl(void)
 {
@@ -511,8 +647,7 @@ static void parseControl(void)
 
 	/* just data, channel != 0 */
 	if (control[2] != 0) {
-		ch = &channels[control[2]];
-		mywrite(ch->fd, control + 3, control_len - 3);
+		write_channel_data(&channels[control[2]], control + 3, control_len - 3);
 		return;
 	}
 
@@ -564,9 +699,10 @@ static void parseControl(void)
 			sin.sin_addr.s_addr = channels[och].ip;
 
 			if (!connect(ch->fd, &sin, sizeof(sin))) {
-				ch->connected = 1;
 				debug("\nconnection request accepted\n");
+				dont_block(ch->fd);
 				sendCommand(WRITE, CmdAccept, och, ch->number);
+				ch->connected = 1;
 			} else {
 				debug("\nconnection request refused\n");
 				deleteChannel(ch->number);
@@ -586,6 +722,7 @@ static void parseControl(void)
 
 			if (!connect(ch->fd, &sin, sizeof(sin))) {
 				debug("connected to port %d", port);
+				dont_block(ch->fd);
 				sendCommand(STDOUT, CmdAccept, och, och);
 				ch->connected = 1;
 			} else {
@@ -622,7 +759,6 @@ static void parseControl(void)
 				ch->connected = 1;
 			}
 			/* unblock listen, accept more connections */
-			channels[och].blocked = 0;
 			channels[och].accepted = -1;
 		}
 		break;
@@ -641,6 +777,12 @@ static void parseControl(void)
 		pty_change_window_size(WRITE, get_int(&control[ 4]),
 				       get_int(&control[ 8]), get_int(&control[12]),
 				       get_int(&control[16]));
+		break;
+
+	case CmdBlockData:
+		ch = &channels[och];
+		if (ch->type == Connected)
+			ch->blocked = port;
 		break;
 
 	case CmdShutdown:
@@ -713,12 +855,22 @@ static unsigned int process(uchar *data, unsigned int len)
 		if (client && magicInitPos >= MAGIC_PREFIX_LEN) {
 			if (c == magicInit[magicInitPos - MAGIC_PREFIX_LEN]) {
 				if (++magicInitPos == strlen(magicInit) + MAGIC_PREFIX_LEN) {
+					int n;
+
 					/* initialize remote */
 					debug("Got initialization request\n");
 					sendInitChannels();
 					initialized = 1;
 					window_changed = 1;
 					check_window_change();
+
+					/* remove magic stuff from results */
+					n = magicInitPos - 1;
+					if (n > pdst - res)
+						n = pdst - res;
+					pdst -= n;
+					magicInitPos = 0;
+					continue;
 				}
 			} else {
 				magicInitPos = 0;
@@ -762,8 +914,8 @@ static void write_data(int fd, const uchar* data, unsigned int len)
 		++p;
 		mywrite(fd, data, p - data);
 		mywrite(fd, &c, 1);
-		data += p - data;
 		len  -= p - data;
+		data += p - data;
 	}
 }
 
@@ -953,17 +1105,12 @@ int main(int argc, char **argv)
 		fatal("duplicating pty");
 	WRITE = ptyfd;
 
-	/* TODO finish support for SIGINT SIGTERM SIGSTOP */
 	signal(SIGPIPE, SIG_IGN);
-	/* TODO see ssh.c for how to handle SIGINT and SIGTERM correctly */
-	if (!client)
-		signal(SIGINT, SIG_IGN);
+	signal(SIGINT, signal_stop);
+	signal(SIGQUIT, signal_stop);
+	signal(SIGTERM, signal_stop);
 
 	if (client) {
-		signal(SIGINT, signal_stop);
-		signal(SIGQUIT, signal_stop);
-		signal(SIGTERM, signal_stop);
-
 		/* TODO only for TTY */
 		signal(SIGWINCH, signal_window_change);
 
@@ -1001,10 +1148,6 @@ int main(int argc, char **argv)
 			break;
 		check_window_change();
 
-		/*
-		 * TODO if no space to write do not read from channels
-		 */
-
 		if (FD_ISSET(READ, &fds_error))
 			fatal("READ");
 		if (FD_ISSET(WRITE, &fds_error))
@@ -1016,9 +1159,12 @@ int main(int argc, char **argv)
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
 			debug_dump(client ? "data from input" : "data from client", data, res);
-			if (!client)
+			if (client) {
+				write_data(WRITE, data, res);
+			} else {
 				res = process(data, res);
-			write_data(WRITE, data, res);
+				mywrite(WRITE, data, res);
+			}
 		}
 
 		if (FD_ISSET(READ, &fds_read)) {
@@ -1027,9 +1173,12 @@ int main(int argc, char **argv)
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
 			debug_dump(client ? "data from server" : "data from program", data, res);
-			if (client)
+			if (client) {
 				res = process(data, res);
-			write_data(STDOUT, data, res);
+				mywrite(STDOUT, data, res);
+			} else {
+				write_data(STDOUT, data, res);
+			}
 		}
 	}
 
