@@ -23,7 +23,6 @@
 
 typedef unsigned char uchar;
 
-#define MAGIC "\xf0"
 static const uchar magic = 0xF0;
 #define MAGIC_PREFIX_LEN 6
 static const char magicInit[] = "ShellTunnelInit";
@@ -36,7 +35,7 @@ typedef enum {
 } ChannelType;
 
 typedef enum {
-	CmdListen = 51,
+	CmdListen = 49,
 	CmdConnect,
 	CmdAccept,
 	CmdClose,
@@ -606,7 +605,6 @@ static void write_channel_data(channel *ch, uchar *data, unsigned int len)
 			}
 			if (errno != EPIPE)
 				fatal("send: %s", strerror(errno));
-			break;
 		} else {
 			debug("written %d (0x%x) bytes to fd %d", res, res, ch->fd);
 			debug_dump(NULL, data, res);
@@ -648,7 +646,10 @@ static void parseControl(void)
 
 	/* just data, channel != 0 */
 	if (control[2] != 0) {
-		write_channel_data(&channels[control[2]], control + 3, control_len - 3);
+		ch = &channels[control[2]];
+		/* avoid sending data to closed sockets */
+		if (ch->type == Connected && ch->fd >= 0)
+			write_channel_data(ch, control + 3, control_len - 3);
 		return;
 	}
 
