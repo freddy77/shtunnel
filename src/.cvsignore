@@ -1,0 +1,8 @@
+.cvsignore
+.deps
+Makefile
+Makefile.in
+config.h
+config.h.in
+shtunnel
+stamp-h1
