@@ -1,0 +1,131 @@
+This is a tunnelling program. The aim is to be able to tunnel TCP
+connection using a shell account (like Sourceforge).
+Users need to have a shell account with perl access so it 
+doesn't break security, it just use available resources.
+
+Mainly the tunnel client program launch a ssh/shell program to
+connect. On the other end another prgram is launched to handle
+other end connection. This end launch another shell and 
+transparently handle connection and data transfer.
+
+Tunnel  ____ Shell ____ TCP ____ Shell ____ Tunnel ____ Shell
+Client                                      Server
+
+Control packets. On a given character (Magic character)
+tunnel execute some function (connect, listen accept or
+others). Every "socket" is numbered in shell tunnel.
+This is called channel. In this implementation a channel
+number of 8 bit is used. I used 0xF0 as Magic. 
+
+Tunnel server send a init sequence to start negotiation
+
+Tunnel client accept options similar to ssh (-R and -L).
+Current implementation do not accept a ip on remote (you
+need to use -R portA::portB syntax)
+
+Init sequence
+=============
+
++------+-------------------+
+| Sync | "ShellTunnelInit" |
++------+-------------------+
+  Sync (6 byte) 6 Magic characters
+  
+Magic packet
+============
+
++--------+--------+--------------+
+| Magic  | Length | mangled data |
++--------+--------+--------------+
+  Magic (1 byte) is the magic character.
+  Length (1 byte) is the mangled data length + 32 (to avoid control characters).
+Some values are special:
+- 32 control data (mangled data length start from 3)
+- 33 just magic character, to tunnel this character in shell, no data
+  following
+Data are mangled to avoid control characters.
+
+Control data
+============
+
+After demangling control data (length==32) has this layout
++------+---------+------+
+| Type | Channel | Port |
++------+---------+------+
+  Type (1 byte) type of control (starting from 51 to avoid control characters)
+- 51 LISTEN
+- 52 CONNECT
+- 53 ACCEPT
+- 54 CLOSE
+  Channel (1 byte) channel number
+  Port (2 byte, network encode) port to use or channel in some cases
+
+Data data
+=========
+
+After demanglig data (length > 33) data has this layout
++---------+----------+
+| Channel | raw data |
++---------+----------+
+  Channel channel which sent data
+  raw data data readed from socket
+
+Tunnel client behaviour
+=======================
+
+- open local listening port (do not accept connection before init)
+- readall bytes, wait init, output received bytes
+- read, if Magic process
+ - if connect (from socket) send CONNECT
+ - if data send data
+ - if connect request (from other end) connect to new socket
+
+Client wants aconnection from server
+====================================
+
+Command: shtunnel -R 1234::5678 user@server
+1234 remote port
+5678 local port
+
+              CLIENT                     SERVER
+init         allocate   LISTEN(1,5678)  open socket
+             "connect"  ------------->  bind+listen
+             channel                    add "listen" channel
+------------------------------------------------------------
+connection               CONNECT(1,0)   block "listen" channel
+on server               <------------   (no other connection)
+to 5678                                 accept socket connection
+
+         try to connect  
+           on success    ACCEPT(1,2)    new "connected" channel
+        (2=new channel)  ---------->    unblock "listen" channel
+
+           on failure   ACCEPT(1,0)     unblock "listen"
+          (0 channel)   ------------->  close connection
+--------------------------------------------------------------
+Closed socket
+on port 5678
+Iserver)
+                         CLOSE(2,0)     close socket and channel
+           close channel <-------------
+--------------------------------------------------------------
+Closed socket
+on client
+           close channel  CLOSE(2,0)      
+                          ---------->   close channel
+--------------------------------------------------------------
+
+Closing channel close socket too.
+
+New perl mangle
+===============
+$s = $data;
+$n = length($data)*8;
+for($i=$n-1; $i > 0; $i -= 8) {
+	vec($s,$n++,1) = vec($s,$i,1);
+	vec($s,$i,1) = 1;
+	vec($s,$n++,1) = 1 if (($n&7)==7);
+}
+vec($s,$n|7,1) = 1 if ($n & 7);
+return $s;
+
