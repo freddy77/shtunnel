@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 
 dnl ------------------------------------------------------------
-dnl $Id: configure.in,v 1.1 2004-10-22 20:04:26 freddy Exp $
+dnl $Id: configure.in,v 1.2 2004-10-23 14:15:20 freddy Exp $
 dnl If you're trying to create a new configure test, try
 dnl
 dnl 	http://autogen.sourceforge.net/conftest.html
@@ -12,9 +12,9 @@ dnl ------------------------------------------------------------
 # ------------------------------------------------------------
 AC_INIT(src/shtunnel.c)
 AC_PREREQ(2.53)
-AC_REVISION($Revision: 1.1 $)
+AC_REVISION($Revision: 1.2 $)
 
-AM_INIT_AUTOMAKE(shtunnel, 0.01)
+AM_INIT_AUTOMAKE(shtunnel, 0.1)
 AM_CONFIG_HEADER(src/config.h)
 
 # ------------------------------------------------------------
@@ -32,26 +32,19 @@ AC_PROG_CPP
 # ------------------------------------------------------------
 # Checks for libraries.
 # ------------------------------------------------------------
-OLDLIBS="$LIBS"
-LIBS=""
 AC_SEARCH_LIBS(socket, socket)
 AC_SEARCH_LIBS(gethostbyname, nsl)
-NETWORK_LIBS="$LIBS"
-LIBS="$OLDLIBS"
-AC_SUBST(NETWORK_LIBS)
+AC_SEARCH_LIBS(openpty, util)
 
 # ------------------------------------------------------------
 # Checks for header files.
 # ------------------------------------------------------------
 AC_HEADER_STDC
 AC_HEADER_TIME
-AC_CHECK_HEADERS([unistd.h errno.h sys/select.h sys/socket.h netinet/in.h netinet/tcp.h \
-	arpa/inet.h signal.h])
-
-# ------------------------------------------------------------
-# Checks for integers/floats of different sizes
-# ------------------------------------------------------------
-AC_CHECK_SIZEOF(char)
+AC_CHECK_HEADERS([unistd.h errno.h signal.h paths.h rpc/types.h sys/stat.h \
+	sys/select.h sys/socket.h netinet/in.h netinet/tcp.h arpa/inet.h \
+	sys/bsdtty.h ttyent.h pty.h utmp.h utmpx.h util.h libutil.h \
+	sys/strtio.h sys/stropts.h])
 
 # ------------------------------------------------------------
 # Checks for typedefs and structures
@@ -66,8 +59,7 @@ AC_C_CONST
 # ------------------------------------------------------------
 # Checks for library functions.
 # ------------------------------------------------------------
-AC_CHECK_FUNCS([vsnprintf])
-AC_REPLACE_FUNCS(asprintf)
+AC_CHECK_FUNCS([vsnprintf getpwuid openpty _getpty])
 
 # ------------------------------------------------------------
 # Checks for library variables.
@@ -94,6 +86,10 @@ fi
 if test "$ac_compiler_gnu" = "yes" ; then
 	CPPFLAGS="$CPPFLAGS -Wall -Wstrict-prototypes -Wmissing-prototypes -Wno-long-long"
 fi
+
+AC_CHECK_FILE("/dev/ptmx",[AC_DEFINE(HAVE_DEV_PTMX, 1, [Define if you have /dev/ptmx])])
+AC_CHECK_FILE("/dev/ptc", [AC_DEFINE(HAVE_DEV_PTS_AND_PTC, 1, [Define if you have /dev/ptc])])
+
 
 AC_MSG_RESULT(done)
 # ------------------------------------------------------------

@@ -69,6 +69,9 @@ static /**/const char *const rcsid[] = { (char *)rcsid, "\100(#)" msg }
 #ifdef HAVE_PATHS_H
 #  include <paths.h> /* For _PATH_XXX */
 #endif
+#ifdef HAVE_SYS_STAT_H
+#  include <sys/stat.h>
+#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -138,5 +141,13 @@ static /**/const char *const rcsid[] = { (char *)rcsid, "\100(#)" msg }
 void error(const char* msg, ...);
 void fatal(const char* msg, ...);
 void debug(const char* msg, ...);
+
+#ifndef _PATH_TTY
+# define _PATH_TTY "/dev/tty"
+#endif
+
+#ifndef HAVE_OPENPTY
+int openpty(int *, int *, char *, struct termios *, struct winsize *);
+#endif /* HAVE_OPENPTY */
 
 #endif /* INCLUDES_H */
