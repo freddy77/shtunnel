@@ -606,6 +606,7 @@ static void write_channel_data(channel *ch, uchar *data, unsigned int len)
 			}
 			if (errno != EPIPE)
 				fatal("send: %s", strerror(errno));
+			break;
 		} else {
 			debug("written %d (0x%x) bytes to fd %d", res, res, ch->fd);
 			debug_dump(NULL, data, res);
@@ -1008,15 +1009,16 @@ int main(int argc, char **argv)
 				" -L <port>::<port>         redirect (see ssh(1))\n"
 				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n");
 			return 0;
+		} else if (strcmp(arg, "--version") == 0) {
+			fprintf(stderr, "shtunnel " VERSION "\n"
+				"Copyright (C) 2004 Frediano Ziglio\n"
+				"This is free software; see the source for copying conditions.  There is NO\n"
+				"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
+			return 0;
 		} else {
 			server = arg;
 		}
 	}
-
-	fprintf(stderr, "shtunnel " VERSION "\n"
-		"Copyright (C) 2004 Frediano Ziglio\n"
-		"This is free software; see the source for copying conditions.  There is NO\n"
-		"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
 
 	if (client) {
 		if (!server)

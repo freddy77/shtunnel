@@ -1,0 +1,10 @@
+. support for redirection
+. no-blocking connect
+. ip specification for -L
+. handle SIGCHLD
+. man page
+. more options (log file name, magic char, blocking data limits)
+. more than 255 channels ??
+. ip v6 ??
+. port to win ?? Use cygwin
+. ftp emulation ??
