@@ -1,60 +1,18 @@
 #include "includes.h"
-#include <stdio.h>
-#include <stdarg.h>
-
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
-#ifdef HAVE_STDLIB_H
-#include <stdlib.h>
-#endif
-
-#ifdef HAVE_STRING_H
-#include <string.h>
-#endif
-
-#ifdef HAVE_ERRNO_H
-#include <errno.h>
-#endif
-
-#if HAVE_SELECT_H
-#include <sys/select.h>
-#endif /* HAVE_SELECT_H */
-
-#if HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
-#endif /* HAVE_SYS_SOCKET_H */
-
-#if HAVE_NETINET_IN_H
-#include <netinet/in.h>
-#endif /* HAVE_NETINET_IN_H */
-
-#if HAVE_NETINET_TCP_H
-#include <netinet/tcp.h>
-#endif /* HAVE_NETINET_TCP_H */
-
-#if HAVE_ARPA_INET_H
-#include <arpa/inet.h>
-#endif /* HAVE_ARPA_INET_H */
-
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif
-
 #include "sshpty.h"
 
 typedef unsigned char uchar;
 
 #define MAGIC "\xf0"
 static const uchar magic = 0xF0;
-static const char magicInit[] = MAGIC MAGIC MAGIC MAGIC MAGIC MAGIC "ShellTunnelInit";
+#define MAGIC_PREFIX_LEN 6
+static const char magicInit[] = "ShellTunnelInit";
 
 typedef enum {
 	Free,
-	Connected,
-	Listen,
-	Connect
+	Connected,	/* represent a tcp/ip channel */
+	Listen,		/* represent a socket listening */
+	RemoteListen	/* remote listening channel */
 } ChannelType;
 
 typedef enum {
@@ -62,6 +20,7 @@ typedef enum {
 	CmdConnect,
 	CmdAccept,
 	CmdClose,
+	CmdShutdown
 } CommandType;
 
 typedef struct channel {
@@ -84,7 +43,6 @@ static const char *server = NULL;
 static int client = 1;
 static const char *shellCmd = NULL;
 static int initialized = 0;
-//const char *sockaddr = "S n a4 x8";
 static int debugEnabled = 0;
 static char endPoint[32] = ""; /* "client" or "server" */
 
@@ -98,10 +56,14 @@ static const int STDIN  = 0;
 static uchar control[MAX_CONTROL_LEN];
 static int control_len = 0;
 
+static void sendCommand(int fd, CommandType type, int channel, int port);
+
 void fatal(const char *msg, ...)
 {
 	va_list ap;
 
+	if (!client)
+		sendCommand(STDOUT, CmdShutdown, 0, 0);
 	leave_raw_mode();
 
 	fprintf(stderr, "fatal error: ");
@@ -135,8 +97,6 @@ void debug(const char *msg, ...)
 	if (!debugEnabled)
 		return;
 
-	if (client)
-		log = stdout;
 	if (!log) {
 		log = fopen("log.txt", "a");
 		if (!log)
@@ -166,15 +126,10 @@ static unsigned int mangle(uchar* in, unsigned int len)
 			in[n/8] |= 0x80;
 			++n;
 		}
-//		vec($in,$n++,1) = vec($in,$i,1);
-//		vec($in,$i,1) = 1;
-//		vec($in,$n++,1) = 1 if (($n&7)==7);
 	}
 	if (n & 7)
 		in[n/8] |= 0x80;
 	return (n+7)/8;
-//	vec($in,$n|7,1) = 1 if ($n & 7);
-//	return $in;
 }
 
 static unsigned int demangle(uchar* in, unsigned char len)
@@ -186,21 +141,8 @@ static unsigned int demangle(uchar* in, unsigned char len)
 		++n;
 		if ((n & 7) == 7)
 			++n;
-//		vec($in,$i,1) = vec($in,$n++,1);
-//		$n++ if (($n&7)==7);
         }
 	return l;
-}
-
-static unsigned int commandPack(CommandType type, int channel, int port, uchar *pack)
-{
-	pack[0] = magic;
-	pack[1] = 32;
-	pack[2] = type;
-	pack[3] = channel;
-	pack[4] = port >> 8;
-	pack[5] = port & 0xff;
-	return 2 + mangle(pack + 2, 4);
 }
 
 static void mywrite(int fd, const uchar *data, unsigned int len)
@@ -221,9 +163,17 @@ static void mywrite(int fd, const uchar *data, unsigned int len)
 
 static void sendCommand(int fd, CommandType type, int channel, int port)
 {
-	uchar cmd[32];
-	unsigned int l = commandPack(type, channel, port, cmd);
-	mywrite(fd, cmd, l);
+	uchar pack[32];
+	unsigned int l;
+
+	pack[0] = magic;
+	pack[1] = 32;
+	pack[2] = type;
+	pack[3] = channel;
+	pack[4] = port >> 8;
+	pack[5] = port & 0xff;
+	l = 2 + mangle(pack + 2, 4);
+	mywrite(fd, pack, l);
 }
 
 static channel* getChannel(ChannelType type, int n, int fd)
@@ -247,7 +197,7 @@ static channel* getChannel(ChannelType type, int n, int fd)
 
 	ch = &channels[n];
 	if (ch->type != Free)
-		fatal("channel should be free");
+		fatal("channel %d should be free", n);
 
 	ch->type = type;
 	ch->number = n;
@@ -278,11 +228,7 @@ static void deleteChannel(int n)
 /* initialize all channels */
 static void initChannels(void)
 {
-	int i;
-	channel *ch;
-
-	for (i = 0; i < 256; ++i) {
-		ch = &channels[i];
+	FOREACH_CHANNEL_BEGIN
 		if (ch->type == Listen) {
 			struct sockaddr_in sin;
 			
@@ -298,30 +244,22 @@ static void initChannels(void)
 			if (listen(ch->fd, 5))
 				fatal("listen: %s", strerror(errno));
 		}
-	}
+	FOREACH_CHANNEL_END
 }
 
 static void sendInitChannels(void)
 {
-	int i;
-	channel *ch;
-
-	for (i = 0; i < 256; ++i) {
-		ch = &channels[i];
-		if (ch->type == Connect) {
+	FOREACH_CHANNEL_BEGIN
+		if (ch->type == RemoteListen) {
 			debug("send listen request for port %d", ch->remote);
 			sendCommand(WRITE, CmdListen, ch->number, ch->remote);
 		}
-	}
+	FOREACH_CHANNEL_END
 }
 
 static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_set *fds_error)
 {
-	int i;
-	channel *ch;
-
-	for (i = 0; i < 256; ++i) {
-		ch = &channels[i];
+	FOREACH_CHANNEL_BEGIN
 		if (ch->type == Listen && !ch->blocked) {
 			FD_SET(ch->fd, fds_read);
 			if (ch->fd > max_fd) max_fd = ch->fd;
@@ -330,12 +268,11 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 			FD_SET(ch->fd, fds_error);
 			if (ch->fd > max_fd) max_fd = ch->fd;
 		}
-	}
+	FOREACH_CHANNEL_END
 
 	select(max_fd + 1, fds_read, fds_write, fds_error, NULL);
 
-	for (i = 0; i < 256; ++i) {
-		ch = &channels[i];
+	FOREACH_CHANNEL_BEGIN
 		if (ch->type == Listen && !ch->blocked) {
 			if (FD_ISSET(ch->fd, fds_read)) {
 				if (client) {
@@ -384,7 +321,7 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 				}
 			}
 		}
-	}
+	FOREACH_CHANNEL_END
 }
 
 static void addLocal(const char *arg)
@@ -394,6 +331,8 @@ static void addLocal(const char *arg)
 	
 	if (sscanf(arg, "%d::%d", &local, &remote) != 2)
 		fatal("invalid local syntax");
+	if (remote <= 0 || remote > 65535 || local <= 0 || local > 65535)
+		fatal("invalid port specification");
 	
 	ch = getChannel(Listen, 0, -1);
 	if (!ch)
@@ -426,45 +365,13 @@ static void addRemote(const char *arg)
 		fatal("invalid port specification");
 	if (sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d) != 4 || a < 0 || a > 255 || b < 0 || b > 255 || c < 0 || c > 255 || d < 0 || d > 255)
 		fatal("invalid ip format");
-	ch = getChannel(Connect, 0, -1);
+	ch = getChannel(RemoteListen, 0, -1);
 	if (!ch)
 		fatal("no more channels");
 	ch->local = local;
 	ch->remote = remote;
 	ch->ip = inet_addr(ip);
 }
-
-/*
-
-sub echoOff 
-{
-	$olterm = $term->getlflag();
-	$octerm = $term->getcc(VTIME);
-	$term->setlflag($olterm & ~(ECHO|ECHOK|ICANON));
-	$term->setcc(VTIME, 0);
-	$term->setattr(fileno(STDIN), TCSANOW);
-}
-
-sub echoOn
-{
-	$term->setlflag($olterm);
-	$term->setcc(VTIME, $octerm);
-	$term->setattr(fileno(STDIN), TCSANOW);
-}
-
-sub gotoRaw
-{
-	my $tmp = $term->getiflag();
-	$term->setiflag($tmp & ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL|IXON));
-	$tmp = $term->getoflag();
-	$term->setoflag($tmp & ~OPOST);
-	$tmp = $term->getlflag();
-	$term->setlflag($tmp & ~(ECHO|ECHONL|ICANON|ISIG|IEXTEN));
-	$tmp = $term->getcflag();
-	$term->setcflag($tmp & ~(CSIZE|PARENB) | CS8);
-}
-
-*/
 
 static void parseControl(void)
 {
@@ -495,6 +402,8 @@ static void parseControl(void)
 	switch (type) {
 	case CmdListen:
 		/* (only server) */
+		if (client)
+			break;
 		/* add channel, open listening socket */
 		ch = getChannel(Listen, och, -1);
 		if (!ch)
@@ -580,6 +489,7 @@ static void parseControl(void)
 				/* close socket */
 				close(channels[och].accepted);
 			} else {
+				port &= 0xff;	/* avoid overflow */
 				/* init new channel */
 				ch = getChannel(Connected, port, -1);
 				if (!ch)
@@ -599,6 +509,23 @@ static void parseControl(void)
 		/* close channel and related socket */
 		debug("connection closed");
 		deleteChannel(och);
+		break;
+
+	case CmdShutdown:
+		/* deinitialize */
+		if (client) {
+			/* close all open channels */
+			FOREACH_CHANNEL_BEGIN
+				if (ch->type != Free && ch->accepted > 0) {
+					close(ch->accepted);
+					ch->accepted = -1;
+				}
+				if (ch->type == Connected)
+					deleteChannel(ch - channels);
+			FOREACH_CHANNEL_END
+
+			initialized = 0;
+		}
 		break;
 	}
 }
@@ -626,7 +553,7 @@ static unsigned int process(uchar *data, unsigned int len)
 				int n = c;
 				/* detect required length */
 				if (controlLen == 2) {
-					debug("\ngot control n=%d\n", n);
+					debug("got control n=%d\n", n);
 					n -= 32;
 					if (n < 0) n = 0;
 					/* it's just a magic character quoted ?? */
@@ -638,17 +565,17 @@ static unsigned int process(uchar *data, unsigned int len)
 					controlLen = (n == 0) ? 7 : n + 2;
 					continue;
 				}
-				debug("\nparsing control...\n");
+				debug("parsing control...\n");
 				parseControl();
 				control_len = 0;
 			}
 			continue;
 		}
-		if (client && magicInitPos >= 6) {
-			if (c == magicInit[magicInitPos]) {
-				if (++magicInitPos == strlen(magicInit)) {
+		if (client && magicInitPos >= MAGIC_PREFIX_LEN) {
+			if (c == magicInit[magicInitPos - MAGIC_PREFIX_LEN]) {
+				if (++magicInitPos == strlen(magicInit) + MAGIC_PREFIX_LEN) {
 					/* initialize remote */
-					debug("\nGot initialization request\n");
+					debug("Got initialization request\n");
 					sendInitChannels();
 					initialized = 1;
 				}
@@ -657,8 +584,8 @@ static unsigned int process(uchar *data, unsigned int len)
 			}
 		}
 		if (c == magic) {
-			if (++magicCharCount >= 6)
-				magicInitPos = 6;
+			if (++magicCharCount >= MAGIC_PREFIX_LEN)
+				magicInitPos = MAGIC_PREFIX_LEN;
 			if (initialized) {
 				controlLen = 2;
 				control[0] = c;
@@ -691,6 +618,7 @@ int main(int argc, char **argv)
 	if (strncmp(arg, "shserver", 8) == 0)
 		client = 0;
 
+	/* TODO parameter for log, help, magic change */
 	for (i = 1; i < argc; ++i) {
 		arg = argv[i];
 		if (strcmp(arg, "-L") == 0) {
@@ -720,7 +648,6 @@ int main(int argc, char **argv)
 			shellCmd = "ssh";
 	} else {
 		server = "";
-		mywrite(STDOUT, magicInit, strlen(magicInit));
 		initialized = 1;
 		strcpy(endPoint, "server");
 
@@ -733,19 +660,27 @@ int main(int argc, char **argv)
 
 	initChannels();
 
-	/* TODO echo off needed on server ?? */
-/*
-
-# disable tty cache line
-$term = POSIX::Termios->new;
-$term->getattr(fileno(STDIN));
-
-echoOff;
-*/
-
 	/* TODO do not allocate a pty if from a pipe */
+	/*
+	 * TODO handle redirection, we must prodive a replace for stdin and stdout
+	 * check minimiun available pty
+	 */
 	if (!pty_allocate(&ptyfd, &ttyfd, ttyname, sizeof(ttyname)))
 		fatal("creating pty");
+
+	/* TODO only if TTY, not for pipe... pass parameter for file to allow input redirection */
+	enter_raw_mode();
+
+	/* init request must be send after switching to raw to avoid echo */
+	if (!client) {
+		uchar buf[256];
+		int i;
+
+		for (i = 0; i < MAGIC_PREFIX_LEN; ++i)
+			buf[i] = magic;
+		strcpy(buf + MAGIC_PREFIX_LEN, magicInit);
+		mywrite(STDOUT, buf, strlen(buf));
+	}
 
 	/* TODO on exit close child and reset terminal */
 	switch(fork()) {
@@ -765,7 +700,11 @@ echoOff;
 			error("dup2 stdin: %s", strerror(errno));
 		if (dup2(ttyfd, 1) < 0)
 			error("dup2 stdout: %s", strerror(errno));
+		if (dup2(ttyfd, 2) < 0)
+			error("dup2 stderr: %s", strerror(errno));
 		close(ttyfd);
+
+		leave_raw_mode();
 
 		/* TODO parse parameters instead of using an extra shell */
 		p = malloc(strlen(server) + strlen(shellCmd) + 10);
@@ -782,10 +721,7 @@ echoOff;
 		fatal("duplicating pty");
 	WRITE = ptyfd;
 
-	/* TODO only if TTY, not for pipe... */
-	if (client)
-		enter_raw_mode();
-
+	/* TODO add support for SIGINT SIGTERM SIGSTOP SIGWINCH (window size change) */
 	signal(SIGPIPE, SIG_IGN);
 	/* TODO see ssh.c for how to handle SIGINT and SIGTERM correctly */
 	if (!client)
@@ -812,6 +748,10 @@ echoOff;
 		if (WRITE > max_fd) max_fd = WRITE;
 
 		channelsSelect(max_fd, &fds_read, &fds_write, &fds_error);
+
+		/*
+		 * TODO if no space to write do not read from channels
+		 */
 
 		if (FD_ISSET(READ, &fds_error))
 			fatal("READ");
