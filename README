@@ -19,3 +19,7 @@ One of the main use it's to use in a compile farm to test some client program
 without installing server one (for example cause you can't install it
 or it's too heavy... consider a proprietary database)
 
+
+This program was originally written in Perl and after a while translated
+to C with additional feature (like pseudo terminals).
+See shtunnel and shserver file in this directory (not compatible with C one).
