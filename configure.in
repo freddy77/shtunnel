@@ -1,0 +1,102 @@
+dnl Process this file with autoconf to produce a configure script.
+
+dnl ------------------------------------------------------------
+dnl $Id: configure.in,v 1.1 2004-10-22 20:04:26 freddy Exp $
+dnl If you're trying to create a new configure test, try
+dnl
+dnl 	http://autogen.sourceforge.net/conftest.html
+dnl ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Initialization
+# ------------------------------------------------------------
+AC_INIT(src/shtunnel.c)
+AC_PREREQ(2.53)
+AC_REVISION($Revision: 1.1 $)
+
+AM_INIT_AUTOMAKE(shtunnel, 0.01)
+AM_CONFIG_HEADER(src/config.h)
+
+# ------------------------------------------------------------
+# Host-specific configuration
+# ------------------------------------------------------------
+AC_CANONICAL_HOST
+AC_GNU_SOURCE
+
+# ------------------------------------------------------------
+# Checks for programs.
+# ------------------------------------------------------------
+AC_PROG_CC
+AC_PROG_CPP
+
+# ------------------------------------------------------------
+# Checks for libraries.
+# ------------------------------------------------------------
+OLDLIBS="$LIBS"
+LIBS=""
+AC_SEARCH_LIBS(socket, socket)
+AC_SEARCH_LIBS(gethostbyname, nsl)
+NETWORK_LIBS="$LIBS"
+LIBS="$OLDLIBS"
+AC_SUBST(NETWORK_LIBS)
+
+# ------------------------------------------------------------
+# Checks for header files.
+# ------------------------------------------------------------
+AC_HEADER_STDC
+AC_HEADER_TIME
+AC_CHECK_HEADERS([unistd.h errno.h sys/select.h sys/socket.h netinet/in.h netinet/tcp.h \
+	arpa/inet.h signal.h])
+
+# ------------------------------------------------------------
+# Checks for integers/floats of different sizes
+# ------------------------------------------------------------
+AC_CHECK_SIZEOF(char)
+
+# ------------------------------------------------------------
+# Checks for typedefs and structures
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Checks for compiler characteristics.
+# ------------------------------------------------------------
+AC_C_BIGENDIAN
+AC_C_CONST
+
+# ------------------------------------------------------------
+# Checks for library functions.
+# ------------------------------------------------------------
+AC_CHECK_FUNCS([vsnprintf])
+AC_REPLACE_FUNCS(asprintf)
+
+# ------------------------------------------------------------
+# Checks for library variables.
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Compile time options
+# ------------------------------------------------------------
+AC_MSG_RESULT(checking compile-time options)
+
+AC_ARG_ENABLE(debug,
+	AC_HELP_STRING([--disable-debug], [disable assert and other things]),
+	[use_debug=$enableval], [use_debug=yes])
+  
+if test "$use_debug" = "yes" ; then
+	AC_MSG_NOTICE(debug enabled)	
+	CPPFLAGS="$CPPFLAGS -DDEBUG=1"
+else
+	AC_MSG_NOTICE(debug disabled)	
+	CPPFLAGS="$CPPFLAGS -DNDEBUG=1"
+fi
+
+# enable some warning for gcc
+if test "$ac_compiler_gnu" = "yes" ; then
+	CPPFLAGS="$CPPFLAGS -Wall -Wstrict-prototypes -Wmissing-prototypes -Wno-long-long"
+fi
+
+AC_MSG_RESULT(done)
+# ------------------------------------------------------------
+# Final output
+# ------------------------------------------------------------
+AC_OUTPUT(Makefile src/Makefile)
