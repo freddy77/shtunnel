@@ -1,7 +1,6 @@
-. support for redirection
+. support for redirection of stream (in, out, err)
 . no-blocking connect
 . ip specification for -L
-. handle SIGCHLD
 . man page
 . more options (log file name, magic char, blocking data limits)
 . more than 255 channels ??
