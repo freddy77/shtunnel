@@ -1,6 +1,7 @@
 Version 0.1.2 - 2004-11-03
 	* pass child code exit to allow scripting
 	* SIGCHLD handled
+	* fix compatibility for debian and SunOS4
 
 Version 0.1.1 - 2004-10-28
 	* fixes for closed connection
