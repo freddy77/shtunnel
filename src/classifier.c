@@ -137,6 +137,7 @@ main(int argc, char **argv)
 	int ret;
 	int cur_pipe = -1;
 	int nice_res;
+	pid_t pid;
 
 	ret = 0;
 	while (argc >= 2 && !ret) {
@@ -233,8 +234,14 @@ main(int argc, char **argv)
 				continue;
 	}
 
-	/* TODO read child status */
-	wait(&ret);
+	/* wait child exit */
+	while ((pid = wait(&ret)) <= 0 && errno == EINTR);
+
+	/* return corrent result */
+	if (WIFEXITED(ret))
+		return WEXITSTATUS(ret);
+	if (WIFSIGNALED(ret))
+		return 1;
 
 	return 0;
 }
