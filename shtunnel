@@ -13,7 +13,6 @@ $client = 1;
 #$shellCmd = 'sh -i';
 $shellCmd = 'ssh -t -t';
 $initialized = 0;
-$commandPack = 'aCCCn';
 $sockaddr = 'S n a4 x8';
 
 sub debug
@@ -65,14 +64,14 @@ sub demangle
 sub commandPack($$$)
 {
 	my ($type, $ch, $port) = @_;
-	return pack($commandPack, $magic, 0, $type, $ch, $port);
+	return $magic.' '.mangle(pack('CCn', $type, $ch, $port));
 }
 
 sub getChannel
 {
 	my ($type, $n) = @_;
 	if (!$n) {
-		foreach my $i (33..254) {
+		foreach my $i (1..254) {
 			if (!$channels{$i}) {
 				$n = $i; last;
 			}
@@ -164,7 +163,8 @@ sub channelsSelect
 					deleteChannel($ch->{number});
 					$r = commandPack(9, $ch->{number}, 0);
 				} else {
-					$r = pack('a C C',$magic, $ch->{number}, length($r)).$r;
+					$r = mangle(pack('C',$ch->{number}).$r);
+					$r = pack('aC',$magic, 32+length($r)).$r;
 				}
 				if ($client) {
 					syswrite WRITE, $r;
@@ -275,12 +275,16 @@ $control = '';
 
 sub parseControl
 {
-	my ($m, $nch, $type, $och, $port) = unpack($commandPack, $control);
-	if ($nch != 0) {
+	my ($m, $nch) = unpack('aC', $control);
+	$control = demangle(substr($control,2));
+	if ($nch != 32) {
+		($nch) = unpack('C',$control);
 		my $ch = $channels{$nch};
-		syswrite $ch->{fh}, substr($control,3);
+		syswrite $ch->{fh}, substr($control,1);
 		return;
 	}
+
+	my ($type, $och, $port) = unpack('CCn', $control);
 
 	# command
 	if ($type == 1) {
@@ -371,21 +375,18 @@ sub process {
 		if (length($control)) {
 			$control .= $c;
 			if (length($control) == $controlLen) {
-				my ($n) = unpack('C', $c);
+				my ($n) = unpack('C',$c);
 				# detect required length
 				if ($controlLen == 2) {
 					debug("\ngot control n=$n\n");
-					if ($n == 255) {
+					$n -= 32;
+					$n = 0 if ($n < 0);
+					if ($n == 1) {
 						$res .= $magic;
 						$control = '';
 						next;
 					}
-					$controlLen = ($n == 0) ? 6 : 3;
-					next;
-				}
-				if ($controlLen == 3) {
-					debug("\nstream length=$n\n");
-					$controlLen += $n;
+					$controlLen = ($n == 0) ? 7 : $n + 2;
 					next;
 				}
 				debug("\nparsing control...\n");
