@@ -1,6 +1,5 @@
 #!/usr/bin/perl
 
-use IO::Handle;
 use Socket;
 use POSIX;
 #use strict;
@@ -26,7 +25,7 @@ sub debug
 	if (!$log) {
 		$log = 'LOG';
 		open($log,'>>log.txt') or die ('Error opening log file');
-		$log->autoflush(1);
+		select LOG; $| = 1; select STDOUT;
 	}
 	print $log $msg;
 }
@@ -76,7 +75,7 @@ sub mywrite
 	my ($fh, $data) = @_;
 	my $n = length($data);
 	my $res;
-	while($n > 0) {
+	while ($n > 0) {
 		do {
 			$res = syswrite($fh, $data);
 		} until(defined($res) || $! != EINTR);
@@ -247,7 +246,8 @@ initChannels;
 
 use IPC::Open2;
 $pid = open2(*READ, *WRITE, "$shellCmd $server" );
-WRITE->autoflush(1);
+select WRITE;  $| = 1;
+select STDOUT; $| = 1;
 
 $| = 1;
 
