@@ -1,0 +1,3 @@
+#!/bin/sh
+exec shtunnel --server --shell bash
+
