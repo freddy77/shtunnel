@@ -33,35 +33,26 @@ sub debug
 sub mangle
 {
 	my $in = shift;
-	my ($nin,$nout) = (0,0);
-	my $max = length($in) * 8;
-	my $out = '';
-	while ($nin < $max) {
-		vec($out, $nout, 1) = vec($in, $nin, 1);
-		++$nin;
-		++$nout;
-		if (($nout & 7) == 7) {
-			vec($out, $nout++, 1) = 1;
-		}
+	my $n = length($in)*8;
+	for (my $i=$n-1; $i > 0; $i -= 8) {
+		vec($in,$n++,1) = vec($in,$i,1);
+		vec($in,$i,1) = 1;
+		vec($in,$n++,1) = 1 if (($n&7)==7);
 	}
-	vec($out, $nout | 7, 1) = 1 if ($nout & 7);
-	return $out;
+	vec($in,$n|7,1) = 1 if ($n & 7);
+	return $in;
 }
 
 sub demangle
 {
 	my $in = shift;
-	my ($nin,$nout) = (0,0);
-	my $max = length($in) * 8;
-	my $out = '';
-	while ($nin < $max) {
-		vec($out, $nout, 1) = vec($in, $nin, 1);
-		++$nin;
-		++$nout;
-		++$nin if (($nin & 7) == 7);
-	}
-	$out = substr($out,0,-1) if ($nout & 7);
-	return $out;
+	my $l = (7*length($in)) >> 3;
+	my $n = $l * 8;
+	for (my $i=$n-1; $i > 0; $i -= 8) {
+                vec($in,$i,1) = vec($in,$n++,1);
+                $n++ if (($n&7)==7);
+        }
+        return substr($in,0,$l);
 }
 
 sub commandPack($$$)
