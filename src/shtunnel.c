@@ -924,10 +924,26 @@ static void write_data(int fd, const uchar* data, unsigned int len)
 /*
  * Signal handling
  */
+static int signal_exit;
+static int child_status;
 
 static void signal_stop(int sig)
 {
+	signal_exit = sig;
 	must_quit = 1;
+}
+
+static void signal_child(int sig)
+{
+	int save_errno = errno;
+	pid_t pid;
+
+	signal_exit = sig;
+	must_quit = 1;
+
+	while ((pid = waitpid(-1, &child_status, 0)) < 0 && errno == EINTR);
+
+	errno = save_errno;
 }
 
 static void signal_window_change(int sig)
@@ -1112,6 +1128,7 @@ int main(int argc, char **argv)
 	signal(SIGINT, signal_stop);
 	signal(SIGQUIT, signal_stop);
 	signal(SIGTERM, signal_stop);
+	signal(SIGCHLD, signal_child);
 
 	if (client) {
 		/* TODO only for TTY */
@@ -1188,6 +1205,10 @@ int main(int argc, char **argv)
 	if (!client)
 		sendCommand(STDOUT, CmdShutdown, 0, 0);
 	leave_raw_mode();
+
+	/* pass code from child process */
+	if (signal_exit == SIGCHLD)
+		return WIFEXITED(child_status) ? WEXITSTATUS(child_status) : 1;
 
 	return 0;
 }
