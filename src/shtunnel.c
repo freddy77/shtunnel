@@ -57,6 +57,13 @@ typedef enum {
 	Connect
 } ChannelType;
 
+typedef enum {
+	CmdListen = 51,
+	CmdConnect,
+	CmdAccept,
+	CmdClose,
+} CommandType;
+
 typedef struct channel {
 	ChannelType type;
 	int number;
@@ -75,7 +82,7 @@ static channel channels[256];
 
 static const char *server = NULL;
 static int client = 1;
-static const char *shellCmd = "ssh -t -t";
+static const char *shellCmd = NULL;
 static int initialized = 0;
 //const char *sockaddr = "S n a4 x8";
 static int debugEnabled = 0;
@@ -185,8 +192,7 @@ static unsigned int demangle(uchar* in, unsigned char len)
 	return l;
 }
 
-#define MAX_CMDLEN 128
-static unsigned int commandPack(int type, int channel, int port, uchar *pack)
+static unsigned int commandPack(CommandType type, int channel, int port, uchar *pack)
 {
 	pack[0] = magic;
 	pack[1] = 32;
@@ -211,6 +217,13 @@ static void mywrite(int fd, const uchar *data, unsigned int len)
 		n -= res;
 		sleep(1);
 	}
+}
+
+static void sendCommand(int fd, CommandType type, int channel, int port)
+{
+	uchar cmd[32];
+	unsigned int l = commandPack(type, channel, port, cmd);
+	mywrite(fd, cmd, l);
 }
 
 static channel* getChannel(ChannelType type, int n, int fd)
@@ -296,13 +309,8 @@ static void sendInitChannels(void)
 	for (i = 0; i < 256; ++i) {
 		ch = &channels[i];
 		if (ch->type == Connect) {
-			uchar cmd[MAX_CMDLEN];
-			unsigned int l;
-
-			/* TODO write all */
 			debug("send listen request for port %d", ch->remote);
-			l = commandPack(51, ch->number, ch->remote, cmd);
-			mywrite(WRITE, cmd, l);
+			sendCommand(WRITE, CmdListen, ch->number, ch->remote);
 		}
 	}
 }
@@ -339,27 +347,22 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 					if (och->fd < 0)
 						fatal("accept %s", strerror(errno));
 					if (initialized) {
-						uchar cmd[MAX_CMDLEN];
-						unsigned l = commandPack(52, och->number, ch->remote, cmd);
-						mywrite(WRITE, cmd, l);
+						sendCommand(WRITE, CmdConnect, och->number, ch->remote);
 					} else {
 						deleteChannel(och->number);
 					}
 				} else {
-					uchar cmd[MAX_CMDLEN];
-					unsigned l;
-
 					ch->accepted = accept(ch->fd, NULL, 0);
 					if (ch->accepted < 0)
 						fatal("accept %s", strerror(errno));
 					ch->blocked = 1;
-					l = commandPack(52, ch->number, 0, cmd);
-					mywrite(STDOUT, cmd, l);
+					sendCommand(STDOUT, CmdConnect, ch->number, 0);
 				}
 			}
 		} else if (ch->type == Connected && ch->connected) {
 			if (FD_ISSET(ch->fd, fds_read)) {
 				ssize_t res;
+				int out_fd = client ? WRITE : STDOUT;
 				uchar data[128 + 3];
 				unsigned int l;
 
@@ -369,7 +372,7 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 				if (!res) {
 					/* connection closed, send close command */
 					deleteChannel(ch->number);
-					l = commandPack(54, ch->number, 0, data);
+					sendCommand(out_fd, CmdClose, ch->number, 0);
 				} else {
 					data[0] = magic;
 					data[1] = res + 32;
@@ -377,11 +380,7 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 					l = mangle(data+2, res+1);
 					data[1] = l + 32; /* 32 to avoid strange chars, just length */
 					l += 2;
-				}
-				if (client) {
-					mywrite(WRITE, data, l);
-				} else {
-					mywrite(STDOUT, data, l);
+					mywrite(out_fd, data, l);
 				}
 			}
 		}
@@ -494,8 +493,8 @@ static void parseControl(void)
 
 	/* command */
 	switch (type) {
-	case 51:
-		/* listen (only server) */
+	case CmdListen:
+		/* (only server) */
 		/* add channel, open listening socket */
 		ch = getChannel(Listen, och, -1);
 		if (!ch)
@@ -516,8 +515,7 @@ static void parseControl(void)
 			fatal("listen: %s", strerror(errno));
 		break;
 
-	case 52:
-		/* connect */
+	case CmdConnect:
 		debug("\nconnect command channel %d port %d\n", och, port);
 		if (client) {
 			/* open a new channel to connect */
@@ -535,21 +533,13 @@ static void parseControl(void)
 			sin.sin_addr.s_addr = channels[och].ip;
 
 			if (!connect(ch->fd, &sin, sizeof(sin))) {
-				uchar cmd[MAX_CMDLEN];
-				unsigned int l;
-				
 				ch->connected = 1;
 				debug("\nrichiesta connessione accettata\n");
-				l = commandPack(53, och, ch->number, cmd);
-				mywrite(WRITE, cmd, l);
+				sendCommand(WRITE, CmdAccept, och, ch->number);
 			} else {
-				uchar cmd[MAX_CMDLEN];
-				unsigned int l;
-
 				debug("\nrichiesta connessione rifiutata\n");
 				deleteChannel(ch->number);
-				l = commandPack(53, och, 0, cmd);
-				mywrite(WRITE, cmd, l);
+				sendCommand(WRITE, CmdAccept, och, 0);
 			}
 		} else {
 			ch = getChannel(Connected, och, -1);
@@ -564,26 +554,18 @@ static void parseControl(void)
 			sin.sin_addr.s_addr = inet_addr("127.0.0.1");
 
 			if (!connect(ch->fd, &sin, sizeof(sin))) {
-				uchar cmd[MAX_CMDLEN];
-				unsigned int l;
-
 				debug("connected to port %d", port);
-				l = commandPack(53, och, och, cmd);
-				mywrite(STDOUT, cmd, l);
+				sendCommand(STDOUT, CmdAccept, och, och);
 				ch->connected = 1;
 			} else {
-				uchar cmd[MAX_CMDLEN];
-				unsigned int l;
-
 				debug("error connecting to port %d", port);
 				deleteChannel(ch->number);
-				l = commandPack(53, och, 0, cmd);
-				mywrite(STDOUT, cmd, l);
+				sendCommand(STDOUT, CmdAccept, och, 0);
 			}
 		}
 		break;
 
-	case 53:
+	case CmdAccept:
 		/* accept */
 		if (client) {
 			if (!port) {
@@ -613,8 +595,7 @@ static void parseControl(void)
 		}
 		break;
 
-	case 54:
-		/* close */
+	case CmdClose:
 		/* close channel and related socket */
 		debug("connection closed");
 		deleteChannel(och);
@@ -698,8 +679,17 @@ int main(int argc, char **argv)
 	int i;
 	const char* arg;
 	char *p;
-	int outpipes[2];
-	int inpipes[2];
+	int ptyfd, ttyfd;
+	char ttyname[128];
+
+	/* if argv[0] == shserver default server */
+	arg = strrchr(argv[0], '/');
+	if (!arg)
+		arg = argv[0];
+	else
+		++arg;
+	if (strncmp(arg, "shserver", 8) == 0)
+		client = 0;
 
 	for (i = 1; i < argc; ++i) {
 		arg = argv[i];
@@ -725,14 +715,25 @@ int main(int argc, char **argv)
 		if (!server)
 			fatal("server option needed");
 		strcpy(endPoint, "client");
+		
+		if (!shellCmd)
+			shellCmd = "ssh";
 	} else {
 		server = "";
 		mywrite(STDOUT, magicInit, strlen(magicInit));
 		initialized = 1;
 		strcpy(endPoint, "server");
+
+		/* get user shell*/
+		if (!shellCmd) {
+			struct passwd *pw = getpwuid(getuid());
+			shellCmd = strdup(pw->pw_shell);
+		}
 	}
 
 	initChannels();
+
+	/* TODO echo off needed on server ?? */
 /*
 
 # disable tty cache line
@@ -742,8 +743,9 @@ $term->getattr(fileno(STDIN));
 echoOff;
 */
 
-	if (pipe(inpipes) || pipe(outpipes))
-		fatal("error creating pipes");
+	/* TODO do not allocate a pty if from a pipe */
+	if (!pty_allocate(&ptyfd, &ttyfd, ttyname, sizeof(ttyname)))
+		fatal("creating pty");
 
 	/* TODO on exit close child and reset terminal */
 	switch(fork()) {
@@ -754,11 +756,18 @@ echoOff;
 				close(ch->fd);
 		FOREACH_CHANNEL_END
 
-		/* replace files */
-		dup2(inpipes[0], 0);
-		dup2(outpipes[1], 1);
+		/* from openssh session.c */
+		close(ptyfd);
+		pty_make_controlling_tty(&ttyfd, ttyname);
 
-		/* TODO parse parameters */
+		/* replace files */
+		if (dup2(ttyfd, 0) < 0)
+			error("dup2 stdin: %s", strerror(errno));
+		if (dup2(ttyfd, 1) < 0)
+			error("dup2 stdout: %s", strerror(errno));
+		close(ttyfd);
+
+		/* TODO parse parameters instead of using an extra shell */
 		p = malloc(strlen(server) + strlen(shellCmd) + 10);
 		sprintf(p, "%s %s", shellCmd, server);
 		execlp("sh", "sh", "-c", p, NULL);
@@ -767,15 +776,18 @@ echoOff;
 	case -1:
 		fatal("fork error");
 	}
-	close(inpipes[0]);
-	close(outpipes[1]);
-	READ = outpipes[0];
-	WRITE = inpipes[1];
+	close(ttyfd);
+	READ = dup(ptyfd);
+	if (READ < 0)
+		fatal("duplicating pty");
+	WRITE = ptyfd;
 
+	/* TODO only if TTY, not for pipe... */
 	if (client)
 		enter_raw_mode();
 
 	signal(SIGPIPE, SIG_IGN);
+	/* TODO see ssh.c for how to handle SIGINT and SIGTERM correctly */
 	if (!client)
 		signal(SIGINT, SIG_IGN);
 
