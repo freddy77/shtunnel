@@ -455,7 +455,6 @@ static void parseControl(void)
 	channel *ch;
 	struct sockaddr_in sin;
 
-	/* FIXME possible buffer overflow */
 	control_len = 2 + demangle(control + 2, control_len - 2);
 
 	/* just data, channel != 0 */
@@ -682,6 +681,30 @@ static unsigned int process(uchar *data, unsigned int len)
 	}
 	memcpy(data, res, pdst - res);
 	return pdst - res;
+}
+
+static void write_data(int fd, const uchar* data, unsigned int len)
+{
+	const uchar c = 32;
+
+	if (!initialized) {
+		mywrite(fd, data, len);
+		return;
+	}
+
+	for (;;) {
+		const uchar *p = (const uchar *) memchr(data, magic, len);
+		if (!p) {
+			mywrite(fd, data, len);
+			return;
+		}
+
+		++p;
+		mywrite(fd, data, p - data);
+		mywrite(fd, &c, 1);
+		data += p - data;
+		len  -= p - data;
+	}
 }
 
 /*
@@ -937,8 +960,7 @@ int main(int argc, char **argv)
 				debug("\nfrom client='%s'", data);
 			if (!client)
 				res = process(data, res);
-			/* TODO quote magic */
-			mywrite(WRITE, data, res);
+			write_data(WRITE, data, res);
 		}
 
 		if (FD_ISSET(READ, &fds_read)) {
@@ -950,8 +972,7 @@ int main(int argc, char **argv)
 			debug("\norig='%s'", data);
 			if (client)
 				res = process(data, res);
-			/* TODO quote magic */
-			mywrite(STDOUT, data, res);
+			write_data(STDOUT, data, res);
 		}
 	}
 
