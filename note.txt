@@ -182,3 +182,20 @@ for($i=$n-1; $i > 0; $i -= 8) {
 vec($s,$n|7,1) = 1 if ($n & 7);
 return $s;
 
+
+Problematic characters
+======================
+
+Some characters are problematic using multiple telnet to reach our host
+
+0x00 I don't know why but don't use this...
+0x03 break, can cause some terminal to close
+0x04 end stream, like 0x03
+0x06 return terminal information
+0x0a line end, some terminal prefix 0x13
+0x0d nothing but it can be considered like 0x0a
+For safety I avoid all 0x00-0x1f range
+0xfd, 0xff used by terminal for configurations
+
+For this reason I mangle data ...
+
