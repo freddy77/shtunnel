@@ -18,6 +18,7 @@
  */
 
 #include "includes.h"
+#include <assert.h>
 #include "sshpty.h"
 
 typedef unsigned char uchar;
@@ -139,6 +140,50 @@ void debug(const char *msg, ...)
 	fflush(log);
 }
 
+static void debug_dump(const char *msg, const void *buf, int length)
+{
+	int i;
+	int j;
+	const int bytesPerLine = 16;
+	char line[16 * 4 + 40], *p;
+	const unsigned char *data = (const unsigned char *) buf;
+
+	if (!debugEnabled)
+		return;
+
+	if (msg)
+		debug("%s", msg);
+
+	for (i = 0; i < length; i += bytesPerLine) {
+		p = line;
+		/* print the offset as a 4 digit hex number */
+		sprintf(p, "%04x", i & 0xffff);
+		p += 4;
+
+		/* print each byte in hex */
+		for (j = 0; j < bytesPerLine; ++j) {
+			if (j + i >= length)
+				sprintf(p, "   ");
+			else
+				sprintf(p, "%c%02x", j == bytesPerLine / 2 ? '-' : ' ', data[i + j]);
+			p += 3;
+		}
+
+		/* skip over to the ascii dump column */
+		sprintf(p, " |");
+		p += 2;
+
+		/* print each byte in ascii */
+		for (j = i; j < length && (j - i) < bytesPerLine; ++j) {
+			if (j - i == bytesPerLine / 2)
+				*p++ = ' ';
+			*p++ = isprint(data[j]) ? data[j] : '.';
+		}
+		strcpy(p, "|");
+		debug("%s", line);
+	}
+}
+
 /*
  * Mangling / unmangling data to avoid problematic characters
  */
@@ -200,6 +245,13 @@ static void mywrite(int fd, const uchar *data, unsigned int len)
 {
 	int n = len;
 	ssize_t res;
+	
+	/* do not send empty data or data to disconnected socket */
+	if (!len || fd < 0)
+		return;
+	
+	debug("writing %u bytes to fd %d", len, fd);
+	debug_dump(NULL, data, len);
 	while (n > 0) {
 		do {
 			res = write(fd, data, n);
@@ -513,10 +565,10 @@ static void parseControl(void)
 
 			if (!connect(ch->fd, &sin, sizeof(sin))) {
 				ch->connected = 1;
-				debug("\nrichiesta connessione accettata\n");
+				debug("\nconnection request accepted\n");
 				sendCommand(WRITE, CmdAccept, och, ch->number);
 			} else {
-				debug("\nrichiesta connessione rifiutata\n");
+				debug("\nconnection request refused\n");
 				deleteChannel(ch->number);
 				sendCommand(WRITE, CmdAccept, och, 0);
 			}
@@ -619,12 +671,19 @@ static unsigned int process(uchar *data, unsigned int len)
 	int magicInitPos = 0, magicCharCount = 0;
 	
 	pdst = res;
+	assert(len <= MAX_DATA_LEN);
+	assert(control_len >= 0 && control_len <= MAX_CONTROL_LEN); 
+	if (control_len) {
+		debug("some control bytes left len=%d (0x%x)", control_len, control_len);
+		debug_dump(NULL, control, control_len);
+	}
 	memcpy(arg, control, control_len);
 	memcpy(arg + control_len, data, len);
 	
+	pend = arg + control_len + len;
+
 	control_len = 0;
 
-	pend = arg + control_len + len;
 	for (p = arg; p < pend; ++p) {
 		c = *p;
 		if (control_len) {
@@ -633,7 +692,7 @@ static unsigned int process(uchar *data, unsigned int len)
 				int n = c;
 				/* detect required length */
 				if (controlLen == 2) {
-					debug("got control n=%d\n", n);
+					debug("got control n=%d (0x%x)\n", n, n);
 					n -= 32;
 					if (n < 0) n = 0;
 					/* it's just a magic character quoted ?? */
@@ -679,6 +738,7 @@ static unsigned int process(uchar *data, unsigned int len)
 		}
 		*pdst++ = c;
 	}
+	assert(pdst - res <= MAX_DATA_LEN);
 	memcpy(data, res, pdst - res);
 	return pdst - res;
 }
@@ -951,25 +1011,22 @@ int main(int argc, char **argv)
 			fatal("WRITE");
 
 		if (FD_ISSET(STDIN, &fds_read)) {
-			char data[MAX_DATA_LEN+1];
+			char data[MAX_DATA_LEN];
 			ssize_t res = read(STDIN, data, MAX_DATA_LEN);
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
-			data[res] = 0;
-			if (!client)
-				debug("\nfrom client='%s'", data);
+			debug_dump(client ? "data from input" : "data from client", data, res);
 			if (!client)
 				res = process(data, res);
 			write_data(WRITE, data, res);
 		}
 
 		if (FD_ISSET(READ, &fds_read)) {
-			char data[MAX_DATA_LEN+1];
+			char data[MAX_DATA_LEN];
 			ssize_t res = read(READ, data, MAX_DATA_LEN);
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
-			data[res] = 0;
-			debug("\norig='%s'", data);
+			debug_dump(client ? "data from server" : "data from program", data, res);
 			if (client)
 				res = process(data, res);
 			write_data(STDOUT, data, res);
