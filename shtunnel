@@ -4,8 +4,8 @@ use IO::Handle;
 use Socket;
 #use strict;
 
-#$magic = "\xF0";
-$magic = "%";
+$magic = "\xF0";
+#$magic = "%";
 $magicInit = ($magic x 6).'ShellTunnelInit';
 %channels = ();
 $server = '';
@@ -14,9 +14,12 @@ $client = 1;
 $shellCmd = 'ssh -t -t';
 $initialized = 0;
 $sockaddr = 'S n a4 x8';
+$debug = 0;
 
 sub debug
 {
+	return unless($debug);
+
 	my ($msg) = @_;
 	$log = 'STDOUT' if ($client);
 	if (!$log) {
@@ -200,10 +203,11 @@ sub addRemote($)
 while ($ARGV[0]) {
 	$arg = shift;
 	SWITCH: {
-	if ($arg eq '-L') { addLocal(shift); last SWITCH; }
-	if ($arg eq '-R') { addRemote(shift); last SWITCH; }
-	if ($arg eq '--server') { $client = 0; }
-	if ($arg eq '--shell') { $shellCmd = shift; }
+	if ($arg eq '-L') { addLocal(shift);        last SWITCH; }
+	if ($arg eq '-R') { addRemote(shift);       last SWITCH; }
+	if ($arg eq '--server') { $client = 0;      last SWITCH; }
+	if ($arg eq '--shell') { $shellCmd = shift; last SWITCH; }
+	if ($arg eq '--debug') { $debug = 1;        last SWITCH; }
 	$server = $arg;
 	}
 }
