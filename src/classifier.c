@@ -117,10 +117,14 @@ my_pipe(pipe_t *p, int num)
 	int res;
 	char ttyname[128];
 
-	if (num <= 0)
+	if (num <= 2) {
 		res = !pty_allocate(&fd[0], &fd[1], ttyname, sizeof(ttyname));
-	else
+		if (!res) set_raw_mode(fd[1]);
+	} else {
 		res = pipe(fd);
+	}
+	if (!res)
+		fcntl(fd[1], F_SETFL, fcntl(fd[1],F_GETFL) | O_SYNC);
 	p->read = fd[0];
 	p->write = fd[1];
 	p->num = num;
