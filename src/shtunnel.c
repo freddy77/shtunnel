@@ -1,4 +1,4 @@
-#include "config.h"
+#include "includes.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -42,11 +42,7 @@
 #include <signal.h>
 #endif
 
-//#!/usr/bin/perl
-
-//use Socket;
-//use POSIX;
-//#use strict;
+#include "sshpty.h"
 
 typedef unsigned char uchar;
 
@@ -74,6 +70,8 @@ typedef struct channel {
 } channel;
 
 static channel channels[256];
+#define FOREACH_CHANNEL_BEGIN {channel *ch; for (ch = channels; ch != channels + (sizeof(channels)/sizeof(channels[0])); ++ch) {
+#define FOREACH_CHANNEL_END   }}
 
 static const char *server = NULL;
 static int client = 1;
@@ -93,9 +91,11 @@ static const int STDIN  = 0;
 static uchar control[MAX_CONTROL_LEN];
 static int control_len = 0;
 
-static void die(const char *msg, ...)
+void fatal(const char *msg, ...)
 {
 	va_list ap;
+
+	leave_raw_mode();
 
 	fprintf(stderr, "fatal error: ");
 
@@ -107,7 +107,20 @@ static void die(const char *msg, ...)
 	exit(1);
 }
 
-static void debug(const char *msg, ...)
+void error(const char *msg, ...)
+{
+	va_list ap;
+
+	fprintf(stderr, "error: ");
+
+	va_start(ap, msg);
+	vfprintf (stderr, msg, ap);
+	va_end(ap);
+
+	fprintf(stderr, "\n");
+}
+
+void debug(const char *msg, ...)
 {
 	va_list ap;
 	static FILE *log = NULL;
@@ -120,7 +133,7 @@ static void debug(const char *msg, ...)
 	if (!log) {
 		log = fopen("log.txt", "a");
 		if (!log)
-			die ("Error opening log file");
+			fatal ("Error opening log file");
 	}
 	va_start(ap, msg);
 	vfprintf(log,  msg, ap);
@@ -217,11 +230,11 @@ static channel* getChannel(ChannelType type, int n, int fd)
 		return NULL;
 
 	if (n < 1 || n > 254)
-		die("Invalid channel number");
+		fatal("Invalid channel number");
 
 	ch = &channels[n];
 	if (ch->type != Free)
-		die("channel should be free");
+		fatal("channel should be free");
 
 	ch->type = type;
 	ch->number = n;
@@ -262,15 +275,15 @@ static void initChannels(void)
 			
 			ch->fd = socket(PF_INET, SOCK_STREAM, 0);
 			if (ch->fd < 0)
-				die("socket: %s", strerror(errno));
+				fatal("socket: %s", strerror(errno));
 
 			sin.sin_family = AF_INET;
 			sin.sin_port = htons(ch->local);
 			sin.sin_addr.s_addr = INADDR_ANY;
 			if (bind(ch->fd, &sin, sizeof(sin)))
-				die("bind: %s", strerror(errno));
+				fatal("bind: %s", strerror(errno));
 			if (listen(ch->fd, 5))
-				die("listen: %s", strerror(errno));
+				fatal("listen: %s", strerror(errno));
 		}
 	}
 }
@@ -321,10 +334,10 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 					/* get a new channel to send to server */
 					channel *och = getChannel(Connected, 0, -1);
 					if (!och)
-						die("No more channels");
+						fatal("No more channels");
 					och->fd = accept(ch->fd, NULL, 0);
 					if (och->fd < 0)
-						die("accept %s", strerror(errno));
+						fatal("accept %s", strerror(errno));
 					if (initialized) {
 						uchar cmd[MAX_CMDLEN];
 						unsigned l = commandPack(52, och->number, ch->remote, cmd);
@@ -338,7 +351,7 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 
 					ch->accepted = accept(ch->fd, NULL, 0);
 					if (ch->accepted < 0)
-						die("accept %s", strerror(errno));
+						fatal("accept %s", strerror(errno));
 					ch->blocked = 1;
 					l = commandPack(52, ch->number, 0, cmd);
 					mywrite(STDOUT, cmd, l);
@@ -364,8 +377,6 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 					l = mangle(data+2, res+1);
 					data[1] = l + 32; /* 32 to avoid strange chars, just length */
 					l += 2;
-//					$r = mangle(pack('C',$ch->{number}).$r);
-//					$r = pack('aC',$magic, 32+length($r)).$r;
 				}
 				if (client) {
 					mywrite(WRITE, data, l);
@@ -383,11 +394,11 @@ static void addLocal(const char *arg)
 	channel *ch;
 	
 	if (sscanf(arg, "%d::%d", &local, &remote) != 2)
-		die("invalid local syntax");
+		fatal("invalid local syntax");
 	
 	ch = getChannel(Listen, 0, -1);
 	if (!ch)
-		die("no more channels");
+		fatal("no more channels");
 	ch->local = local;
 	ch->remote = remote;
 	ch->blocked = 0;
@@ -407,18 +418,18 @@ static void addRemote(const char *arg)
 		start = strchr(arg, ':');
 		end = start ? strchr(start + 1, ':') : NULL;
 		if (!end || (end - start) >= sizeof(ip) || sscanf(arg,"%d:", &remote) != 1 || sscanf(end, ":%d", &local) != 1)
-			die("invalid remote syntax");
+			fatal("invalid remote syntax");
 		++start;
 		memcpy(ip, start, end - start);
 		ip[end - start] = 0;
 	}
 	if (remote <= 0 || remote > 65535 || local <= 0 || local > 65535)
-		die("invalid port specification");
+		fatal("invalid port specification");
 	if (sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d) != 4 || a < 0 || a > 255 || b < 0 || b > 255 || c < 0 || c > 255 || d < 0 || d > 255)
-		die("invalid ip format");
+		fatal("invalid ip format");
 	ch = getChannel(Connect, 0, -1);
 	if (!ch)
-		die("no more channels");
+		fatal("no more channels");
 	ch->local = local;
 	ch->remote = remote;
 	ch->ip = inet_addr(ip);
@@ -464,18 +475,14 @@ static void parseControl(void)
 	channel *ch;
 	struct sockaddr_in sin;
                                                                                                                                                
-//	my ($m, $nch) = unpack('aC', $control);
 	nch = control[1];
 	control_len -= 2;
 	memmove(control, control + 2, control_len);
-//	$control = demangle(substr($control,2));
 	control_len = demangle(control, control_len);
 
 	/* just data */
 	if (nch != 32) {
 		nch = control[0];
-//		($nch) = unpack('C',$control);
-//		my $ch = $channels{$nch};
 		ch = &channels[nch];
 		mywrite(ch->fd, control + 1, control_len - 1);
 		return;
@@ -492,23 +499,21 @@ static void parseControl(void)
 		/* add channel, open listening socket */
 		ch = getChannel(Listen, och, -1);
 		if (!ch)
-			die("No more channels");
+			fatal("No more channels");
 		debug("listen request channel %d port %d", och, port);
 		ch->local = port;
-//		my $fh = $ch->{fh};
 		ch->fd = socket(PF_INET, SOCK_STREAM, 0);
 		if (ch->fd < 0)
-			die("socket: %s", strerror(errno));
-//		my $this = pack($sockaddr, &AF_INET, $ch->{'local'}, "\0\0\0\0");
+			fatal("socket: %s", strerror(errno));
 
 		sin.sin_family = AF_INET;
 		sin.sin_port = htons(ch->local);
 		sin.sin_addr.s_addr = INADDR_ANY;
 
 		if (bind(ch->fd, &sin, sizeof(sin)))
-			die("bind: %s", strerror(errno));
+			fatal("bind: %s", strerror(errno));
 		if (listen(ch->fd, 5))
-			die("listen: %s", strerror(errno));
+			fatal("listen: %s", strerror(errno));
 		break;
 
 	case 52:
@@ -518,12 +523,12 @@ static void parseControl(void)
 			/* open a new channel to connect */
 			ch = getChannel(Connected, 0, -1);
 			if (!ch)
-				die("No more channels");
+				fatal("No more channels");
 			port = channels[och].local;
 
 			ch->fd = socket(PF_INET, SOCK_STREAM, 0);
 			if (ch->fd < 0)
-				die("socket: %s", strerror(errno));
+				fatal("socket: %s", strerror(errno));
 
 			sin.sin_family = AF_INET;
 			sin.sin_port = htons(port);
@@ -549,10 +554,10 @@ static void parseControl(void)
 		} else {
 			ch = getChannel(Connected, och, -1);
 			if (!ch)
-				die("No more channels");
+				fatal("No more channels");
 			ch->fd = socket(PF_INET, SOCK_STREAM, 0);
 			if (ch->fd < 0)
-				die("socket: %s", strerror(errno));
+				fatal("socket: %s", strerror(errno));
 
 			sin.sin_family = AF_INET;
 			sin.sin_port = htons(port);
@@ -596,7 +601,7 @@ static void parseControl(void)
 				/* init new channel */
 				ch = getChannel(Connected, port, -1);
 				if (!ch)
-					die("No more channels");
+					fatal("No more channels");
 				/* copy socket */
 				ch->fd = channels[och].accepted;
 				/* set connected */
@@ -634,7 +639,6 @@ static unsigned int process(uchar *data, unsigned int len)
 	pend = arg + control_len + len;
 	for (p = arg; p < pend; ++p) {
 		c = *p;
-//		debug("control=".join(',',unpack('C6',$control))."\n") if (length($control));
 		if (control_len) {
 			control[control_len++] = c;
 			if (control_len == controlLen) {
@@ -700,15 +704,15 @@ int main(int argc, char **argv)
 	for (i = 1; i < argc; ++i) {
 		arg = argv[i];
 		if (strcmp(arg, "-L") == 0) {
-			if (++i >= argc) die("parameter expected");
+			if (++i >= argc) fatal("parameter expected");
 			addLocal(argv[i]);
 		} else if (strcmp(arg, "-R") == 0) {
-			if (++i >= argc) die("parameter expected");
+			if (++i >= argc) fatal("parameter expected");
 			addRemote(argv[i]);
 		} else if (strcmp(arg, "--server") == 0) {
 			client = 0;
 		} else if (strcmp(arg, "--shell") == 0) {
-			if (++i >= argc) die("parameter expected");
+			if (++i >= argc) fatal("parameter expected");
 			shellCmd = argv[i];
 		} else if (strcmp(arg, "--debug") == 0) {
 			debugEnabled = 1;
@@ -719,7 +723,7 @@ int main(int argc, char **argv)
 
 	if (client) {
 		if (!server)
-			die("server option needed");
+			fatal("server option needed");
 		strcpy(endPoint, "client");
 	} else {
 		server = "";
@@ -730,42 +734,46 @@ int main(int argc, char **argv)
 
 	initChannels();
 /*
-use IPC::Open2;
-$pid = open2(*READ, *WRITE, "$shellCmd $server" );
-select WRITE;  $| = 1;
-select STDOUT; $| = 1;
-
-$| = 1;
 
 # disable tty cache line
 $term = POSIX::Termios->new;
 $term->getattr(fileno(STDIN));
 
 echoOff;
-gotoRaw if ($client);
 */
 
 	if (pipe(inpipes) || pipe(outpipes))
-		die("error creating pipes");
+		fatal("error creating pipes");
 
+	/* TODO on exit close child and reset terminal */
 	switch(fork()) {
 	case 0:
+		/* close all listen sockets */
+		FOREACH_CHANNEL_BEGIN
+			if (ch->type == Listen && ch->fd >= 0)
+				close(ch->fd);
+		FOREACH_CHANNEL_END
+
 		/* replace files */
 		dup2(inpipes[0], 0);
 		dup2(outpipes[1], 1);
 
+		/* TODO parse parameters */
 		p = malloc(strlen(server) + strlen(shellCmd) + 10);
 		sprintf(p, "%s %s", shellCmd, server);
 		execlp("sh", "sh", "-c", p, NULL);
 		return 1;
 		break;
 	case -1:
-		die("fork error");
+		fatal("fork error");
 	}
 	close(inpipes[0]);
 	close(outpipes[1]);
 	READ = outpipes[0];
 	WRITE = inpipes[1];
+
+	if (client)
+		enter_raw_mode();
 
 	signal(SIGPIPE, SIG_IGN);
 	if (!client)
@@ -794,15 +802,15 @@ gotoRaw if ($client);
 		channelsSelect(max_fd, &fds_read, &fds_write, &fds_error);
 
 		if (FD_ISSET(READ, &fds_error))
-			die("READ");
+			fatal("READ");
 		if (FD_ISSET(WRITE, &fds_error))
-			die("WRITE");
+			fatal("WRITE");
 
 		if (FD_ISSET(STDIN, &fds_read)) {
 			char data[MAX_DATA_LEN+1];
 			ssize_t res = read(STDIN, data, MAX_DATA_LEN);
 			if (res <= 0)
-				die("broken pipe %s", endPoint);
+				fatal("broken pipe %s", endPoint);
 			data[res] = 0;
 			if (!client)
 				debug("\nfrom client='%s'", data);
@@ -815,7 +823,7 @@ gotoRaw if ($client);
 			char data[MAX_DATA_LEN+1];
 			ssize_t res = read(READ, data, MAX_DATA_LEN);
 			if (res <= 0)
-				die("broken pipe %s", endPoint);
+				fatal("broken pipe %s", endPoint);
 			data[res] = 0;
 			debug("\norig='%s'", data);
 			if (client)
