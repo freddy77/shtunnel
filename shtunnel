@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 
+use IO::Handle;
 use Socket;
 #use strict;
 
@@ -15,11 +16,63 @@ $initialized = 0;
 $commandPack = 'aCCCn';
 $sockaddr = 'S n a4 x8';
 
+sub debug
+{
+	my ($msg) = @_;
+	$log = 'STDOUT' if ($client);
+	if (!$log) {
+		$log = 'LOG';
+		open($log,'>>log.txt') or die ('Error opening log file');
+		$log->autoflush(1);
+	}
+	print $log $msg;
+}
+
+sub mangle
+{
+	my $in = shift;
+	my ($nin,$nout) = (0,0);
+	my $max = length($in) * 8;
+	my $out = '';
+	while ($nin < $max) {
+		vec($out, $nout, 1) = vec($in, $nin, 1);
+		++$nin;
+		++$nout;
+		if (($nout & 7) == 7) {
+			vec($out, $nout++, 1) = 1;
+		}
+	}
+	vec($out, $nout | 7, 1) = 1 if ($nout & 7);
+	return $out;
+}
+
+sub demangle
+{
+	my $in = shift;
+	my ($nin,$nout) = (0,0);
+	my $max = length($in) * 8;
+	my $out = '';
+	while ($nin < $max) {
+		vec($out, $nout, 1) = vec($in, $nin, 1);
+		++$nin;
+		++$nout;
+		++$nin if (($nin & 7) == 7);
+	}
+	$out = substr($out,0,-1) if ($nout & 7);
+	return $out;
+}
+
+sub commandPack($$$)
+{
+	my ($type, $ch, $port) = @_;
+	return pack($commandPack, $magic, 0, $type, $ch, $port);
+}
+
 sub getChannel
 {
 	my ($type, $n) = @_;
 	if (!$n) {
-		foreach my $i (1..254) {
+		foreach my $i (33..254) {
 			if (!$channels{$i}) {
 				$n = $i; last;
 			}
@@ -61,8 +114,8 @@ sub sendInitChannels
 	foreach my $ch (values %channels) {
 		if ($ch->{type} eq 'connect') {
 			# TODO write all
-#			print "send listen request for port".$ch->{remote};
-			syswrite WRITE, pack($commandPack, $magic, 0, 1, $ch->{number}, $ch->{remote});
+			debug("send listen request for port".$ch->{remote});
+			syswrite WRITE, commandPack(1, $ch->{number}, $ch->{remote});
 		}
 	}
 }
@@ -77,10 +130,9 @@ sub channelsSelect
 			vec($error, fileno($ch->{fh}), 1) = 1;
 		}
 	}
-}
 
-sub channelsSelected
-{
+	select($read, $write, $error, undef);
+
 	foreach my $ch (values %channels) {
 		my $fh = $ch->{fh};
 		my $f = fileno($fh);
@@ -90,13 +142,17 @@ sub channelsSelected
 					my $och = getChannel('connected') or die('No more channels');
 					my $ofh = $och->{fh};
 					accept($ofh,$fh) || die "accept $!";
-					syswrite(WRITE, pack($commandPack, $magic, 0, 2, $och->{number}, $ch->{remote}));
+					if ($initialized) {
+						syswrite(WRITE, commandPack(2, $och->{number}, $ch->{remote}));
+					} else {
+						deleteChannel($och->{number});
+					}
 				} else {
 					my $ofh = "ACCEPT".$ch->{number};
 					accept($ofh,$fh) || die "accept $!";
 					$ch->{blocked} = 1;
 					$ch->{accepted} = $ofh;
-					syswrite(STDOUT, pack($commandPack, $magic, 0, 2, $ch->{number}, 0));
+					syswrite(STDOUT, commandPack(2, $ch->{number}, 0));
 				}
 			}
 		} elsif ($ch->{type} eq 'connected' && $ch->{connected}) {
@@ -106,7 +162,7 @@ sub channelsSelected
 				if (!length($r)) {
 					# connection closed, send close command
 					deleteChannel($ch->{number});
-					$r = pack($commandPack, $magic, 0, 4, $ch->{number}, 0);
+					$r = commandPack(9, $ch->{number}, 0);
 				} else {
 					$r = pack('a C C',$magic, $ch->{number}, length($r)).$r;
 				}
@@ -154,29 +210,57 @@ while ($ARGV[0]) {
 
 if ($client) {
 	die("server option needed") if (!$server);
+	$endPoint = 'client';
 } else {
 	$server = '';
-	print $magicInit;
+	syswrite(STDOUT, $magicInit);
 	$initialized = 1;
+	$endPoint = 'server';
 }
-
-# disable tty cache line
-use POSIX;
-$term = POSIX::Termios->new;
-$term->getattr(fileno(STDIN));
-$oterm = $term->getlflag();
-$term->setlflag($oterm & ~(ECHO|ECHOK|ICANON));
-$term->setcc(VTIME, 0);
-$term->setattr(fileno(STDIN), TCSANOW);
 
 initChannels;
 
-use IO::Handle;
 use IPC::Open2;
 $pid = open2(*READ, *WRITE, "$shellCmd $server" );
 WRITE->autoflush(1);
 
 $| = 1;
+
+# disable tty cache line
+use POSIX;
+$term = POSIX::Termios->new;
+$term->getattr(fileno(STDIN));
+
+sub echoOff 
+{
+	$olterm = $term->getlflag();
+	$octerm = $term->getcc(VTIME);
+	$term->setlflag($olterm & ~(ECHO|ECHOK|ICANON));
+	$term->setcc(VTIME, 0);
+	$term->setattr(fileno(STDIN), TCSANOW);
+}
+
+sub echoOn
+{
+	$term->setlflag($olterm);
+	$term->setcc(VTIME, $octerm);
+	$term->setattr(fileno(STDIN), TCSANOW);
+}
+
+sub gotoRaw
+{
+	my $tmp = $term->getiflag();
+	$term->setiflag($tmp & ~(IGNBRK|BRKINT|PARMRK|ISTRIP|INLCR|IGNCR|ICRNL|IXON));
+	$tmp = $term->getoflag();
+	$term->setoflag($tmp & ~OPOST);
+	$tmp = $term->getlflag();
+	$term->setlflag($tmp & ~(ECHO|ECHONL|ICANON|ISIG|IEXTEN));
+	$tmp = $term->getcflag();
+	$term->setcflag($tmp & ~(CSIZE|PARENB) | CS8);
+}
+
+echoOff;
+gotoRaw if ($client);
 
 sub fhbits {
 	my(@fhlist) = split(' ',shift);
@@ -203,7 +287,7 @@ sub parseControl
 		# listen (only server)
 		# add channel, open listening socket
 		my $ch = getChannel('listen',$och) or die('No more channels');
-#		print "listen request channel $och port $port ";
+		debug("listen request channel $och port $port ");
 		$ch->{'local'} = $port;
 		my $fh = $ch->{fh};
 		socket($fh, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
@@ -212,42 +296,45 @@ sub parseControl
 		listen($fh, 5) || die "listen: $!";
 	} elsif ($type == 2) {
 		# connect
-#		print "\nconnect command channel $och port $port\n";
+		debug("\nconnect command channel $och port $port\n");
 		if ($client) {
 			$nch = getChannel('connected') or die('No more channels');
 			$port = $channels{$och}->{'local'};
 			socket($nch->{fh}, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
 			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, "\x7f\0\0\x01"))) {
 				$nch->{connected} = 1;
-				syswrite WRITE, pack($commandPack, $magic, 0, 3, $och, $nch->{number});
+				debug("\nrichiesta connessione accettata\n");
+				my $res = syswrite WRITE, commandPack(8, $och, $nch->{number});
+				debug("res=$res");
 			} else {
+				debug("\nrichiesta connessione rifiutata\n");
 				deleteChannel($nch->{number});
-				syswrite WRITE, pack($commandPack, $magic, 0, 3, $och, 0);
+				syswrite WRITE, commandPack(8, $och, 0);
 			}
 		} else {
 			my $nch = getChannel('connected',$och) or die('No more channels');
 			socket($nch->{fh}, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
 			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, "\x7f\0\0\x01"))) {
-#				print "connected to port $port";
-				syswrite(STDOUT, pack($commandPack, $magic, 0, 3, $och, $och));
+				debug("connected to port $port");
+				syswrite(STDOUT, commandPack(8, $och, $och));
 				$nch->{connected} = 1;
 			} else {
-#				print "error connecting to port $port";
+				debug("error connecting to port $port");
 				deleteChannel($nch->{number});
-				syswrite STDOUT, pack($commandPack, $magic, 0, 3, $och, 0);
+				syswrite STDOUT, commandPack(8, $och, 0);
 			}
 		}
-	} elsif ($type == 3) {
+	} elsif ($type == 8) {
 		# accept
 		if ($client) {
 			if (!$port) {
 				deleteChannel($och);
 			} else {
-#				print 'client: accepted connection';
+				debug('client: accepted connection');
 				$channels{$och}->{connected} = 1;
 			}
 		} else {
-#			print "accept from client";
+			debug("accept from client");
 			if (!$port) {
 				# close socket
 				close($channels{$och}->{accepted});
@@ -255,10 +342,10 @@ sub parseControl
 				# init new channel
 				my $ch = getChannel('connected', $port) or die('No more channels');
 				# copy socket
-#				print "fileno=".fileno($channels{$och}->{accepted});
+				debug("fileno=".fileno($channels{$och}->{accepted}));
 				$ch->{fh} = $channels{$och}->{accepted};
 				undef $channels{$och}->{accepted};
-#				print "fileno=".fileno($ch->{fh});
+				debug("fileno=".fileno($ch->{fh}));
 				# set connected
 				$ch->{connected} = 1;
 			}
@@ -266,9 +353,10 @@ sub parseControl
 			$channels{$och}->{blocked} = 0;
 			undef $channels{$och}->{accepted};
 		}
-	} elsif ($type == 4) {
+	} elsif ($type == 9) {
 		# close
 		# close channel and related socket
+		debug("connection closed");
 		deleteChannel($och);
 	}
 }
@@ -279,14 +367,14 @@ sub process {
 	my $controlLen;
 	$control = '';
 	foreach my $c (split('', $arg)) {
-#		print "control=".join(',',unpack('C6',$control))."\n" if (!$client && $control);
+		debug("control=".join(',',unpack('C6',$control))."\n") if (length($control));
 		if (length($control)) {
 			$control .= $c;
 			if (length($control) == $controlLen) {
 				my ($n) = unpack('C', $c);
 				# detect required length
 				if ($controlLen == 2) {
-#					print "\ngot control n=$n\n";
+					debug("\ngot control n=$n\n");
 					if ($n == 255) {
 						$res .= $magic;
 						$control = '';
@@ -296,11 +384,11 @@ sub process {
 					next;
 				}
 				if ($controlLen == 3) {
-#					print "\nstream length=$n\n";
+					debug("\nstream length=$n\n");
 					$controlLen += $n;
 					next;
 				}
-#				print "\nparsing control...\n";
+				debug("\nparsing control...\n");
 				parseControl;
 				$control = '';
 			}
@@ -310,7 +398,7 @@ sub process {
 			if ($c eq substr($magicInit,$magicInitPos,1)) {
 				if (++$magicInitPos == length($magicInit)) {
 					# initialize remote
-#					print '\nGot initialization request\n';
+					debug("\nGot initialization request\n");
 					sendInitChannels;
 					$initialized = 1;
 				}
@@ -319,17 +407,14 @@ sub process {
 			}
 		}
 		if ($c eq $magic) {
-			if (++$magicCharCount >= 6) {
-				$magicInitPos = 6;
+			$magicInitPos = 6 if (++$magicCharCount >= 6);
+			if ($initialized) {
+				$controlLen = 2;
+				$control = $c;
+				next;
 			}
 		} else {
 			$magicCharCount = 0;
-		}
-#		print "\ninit=$initialized magic=$magic\n" if ($client);
-		if ($initialized && $c eq $magic) {
-			$controlLen = 2;
-			$control = $c;
-			next;
 		}
 		$res .= $c;
 	}
@@ -337,16 +422,14 @@ sub process {
 }
 
 $SIG{'PIPE'} = 'IGNORE';
+$SIG{'INT'} = 'IGNORE' if (!$client);
 
 while() {
 	$read = fhbits('STDIN READ');
 	$write = '';
 	$error = fhbits('READ WRITE');
+
 	channelsSelect;
-
-	$nfound = select($read, $write, $error, undef);
-
-	channelsSelected;
 
 	die('READ') if (vec($error, fileno(READ), 1));
 	die('WRITE') if (vec($error, fileno(WRITE), 1));
@@ -354,6 +437,8 @@ while() {
 	$f = fileno(STDIN);
 	if (vec($read,$f,1)) {
 		sysread(STDIN, $l, 1000);
+		die("broken pipe $endPoint") if (!length($l));
+		debug("\nfrom client=".join(',',unpack('C*',$l))."\n") if (!$client);
 		$l = process($l) if (!$client);
 		syswrite(WRITE, $l);
 	}
@@ -361,6 +446,8 @@ while() {
 	$f = fileno(READ);
 	if (vec($read, $f, 1)) {
 		sysread(READ, $l, 1000);
+		die("broken pipe $endPoint") if (!length($l));
+		debug("\norig=".join(',',unpack('C*',$l))."\n");
 		$l = process($l) if ($client);
 		syswrite(STDOUT,$l);
 	}
