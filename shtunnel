@@ -117,7 +117,7 @@ sub sendInitChannels
 		if ($ch->{type} eq 'connect') {
 			# TODO write all
 			debug("send listen request for port".$ch->{remote});
-			syswrite WRITE, commandPack(1, $ch->{number}, $ch->{remote});
+			syswrite WRITE, commandPack(51, $ch->{number}, $ch->{remote});
 		}
 	}
 }
@@ -145,7 +145,7 @@ sub channelsSelect
 					my $ofh = $och->{fh};
 					accept($ofh,$fh) || die "accept $!";
 					if ($initialized) {
-						syswrite(WRITE, commandPack(2, $och->{number}, $ch->{remote}));
+						syswrite(WRITE, commandPack(52, $och->{number}, $ch->{remote}));
 					} else {
 						deleteChannel($och->{number});
 					}
@@ -154,7 +154,7 @@ sub channelsSelect
 					accept($ofh,$fh) || die "accept $!";
 					$ch->{blocked} = 1;
 					$ch->{accepted} = $ofh;
-					syswrite(STDOUT, commandPack(2, $ch->{number}, 0));
+					syswrite(STDOUT, commandPack(52, $ch->{number}, 0));
 				}
 			}
 		} elsif ($ch->{type} eq 'connected' && $ch->{connected}) {
@@ -164,7 +164,7 @@ sub channelsSelect
 				if (!length($r)) {
 					# connection closed, send close command
 					deleteChannel($ch->{number});
-					$r = commandPack(9, $ch->{number}, 0);
+					$r = commandPack(54, $ch->{number}, 0);
 				} else {
 					$r = mangle(pack('C',$ch->{number}).$r);
 					$r = pack('aC',$magic, 32+length($r)).$r;
@@ -181,23 +181,24 @@ sub channelsSelect
 
 sub addLocal($)
 {
-	my $arg = shift;
-	die('invalid local syntax') if ($arg !~ /^(\d+)::(\d+)$/);
+	die('invalid local syntax') if (shift !~ /^(\d+)::(\d+)$/);
 	my ($local, $remote) = ($1, $2);
 	my $ch = getChannel('listen') or die('no more channels');
 	$ch->{'local'} = $local;
 	$ch->{'remote'} = $remote;
-	# TODO init directly
 }
 
 sub addRemote($)
 {
-	my $arg = shift;
-	die('invalid remote syntax') if ($arg !~ /^(\d+)::(\d+)$/);
-	my ($remote, $local) = ($1, $2);
+	die('invalid remote syntax') if (shift !~ /^(\d+):([^:]*):(\d+)$/);
+	my ($remote, $ip, $local) = ($1, $2, $3);
+	$ip = '127.0.0.1' unless ($ip);
+	die('invalid ip format') if ($ip !~ /^\d+\.\d+\.\d+\.\d+$/);
+	$ip = pack('C4',split(/\./,$ip));
 	my $ch = getChannel('connect') or die('no more channels');
 	$ch->{'local'} = $local;
 	$ch->{'remote'} = $remote;
+	$ch->{'ip'} = $ip;
 }
 
 while ($ARGV[0]) {
@@ -291,7 +292,7 @@ sub parseControl
 	my ($type, $och, $port) = unpack('CCn', $control);
 
 	# command
-	if ($type == 1) {
+	if ($type == 51) {
 		# listen (only server)
 		# add channel, open listening socket
 		my $ch = getChannel('listen',$och) or die('No more channels');
@@ -302,37 +303,37 @@ sub parseControl
 		my $this = pack($sockaddr, &AF_INET, $ch->{'local'}, "\0\0\0\0");
 		bind($fh, $this) || die "bind: $!";
 		listen($fh, 5) || die "listen: $!";
-	} elsif ($type == 2) {
+	} elsif ($type == 52) {
 		# connect
 		debug("\nconnect command channel $och port $port\n");
 		if ($client) {
 			$nch = getChannel('connected') or die('No more channels');
 			$port = $channels{$och}->{'local'};
 			socket($nch->{fh}, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
-			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, "\x7f\0\0\x01"))) {
+			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, $channels{$och}->{ip}))) {
 				$nch->{connected} = 1;
 				debug("\nrichiesta connessione accettata\n");
-				my $res = syswrite WRITE, commandPack(8, $och, $nch->{number});
+				my $res = syswrite WRITE, commandPack(53, $och, $nch->{number});
 				debug("res=$res");
 			} else {
 				debug("\nrichiesta connessione rifiutata\n");
 				deleteChannel($nch->{number});
-				syswrite WRITE, commandPack(8, $och, 0);
+				syswrite WRITE, commandPack(53, $och, 0);
 			}
 		} else {
 			my $nch = getChannel('connected',$och) or die('No more channels');
 			socket($nch->{fh}, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
 			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, "\x7f\0\0\x01"))) {
 				debug("connected to port $port");
-				syswrite(STDOUT, commandPack(8, $och, $och));
+				syswrite(STDOUT, commandPack(53, $och, $och));
 				$nch->{connected} = 1;
 			} else {
 				debug("error connecting to port $port");
 				deleteChannel($nch->{number});
-				syswrite STDOUT, commandPack(8, $och, 0);
+				syswrite STDOUT, commandPack(53, $och, 0);
 			}
 		}
-	} elsif ($type == 8) {
+	} elsif ($type == 53) {
 		# accept
 		if ($client) {
 			if (!$port) {
@@ -361,7 +362,7 @@ sub parseControl
 			$channels{$och}->{blocked} = 0;
 			undef $channels{$och}->{accepted};
 		}
-	} elsif ($type == 9) {
+	} elsif ($type == 54) {
 		# close
 		# close channel and related socket
 		debug("connection closed");
