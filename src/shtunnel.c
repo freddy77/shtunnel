@@ -1,3 +1,22 @@
+/* shtunnel - program to tunnel tcp stream in a shell session
+ * Copyright (C) 2004  Frediano Ziglio
+ * -----
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+
 #include "includes.h"
 #include "sshpty.h"
 
@@ -20,7 +39,8 @@ typedef enum {
 	CmdConnect,
 	CmdAccept,
 	CmdClose,
-	CmdShutdown
+	CmdShutdown,
+	CmdWindowChanged
 } CommandType;
 
 typedef struct channel {
@@ -56,7 +76,17 @@ static const int STDIN  = 0;
 static uchar control[MAX_CONTROL_LEN];
 static int control_len = 0;
 
+/* program should terminate on signal */
+static volatile int must_quit;
+/* program have received a windows change */
+static volatile int window_changed;
+
 static void sendCommand(int fd, CommandType type, int channel, int port);
+static void check_window_change(void);
+
+/*
+ * Logging functions
+ */
 
 void fatal(const char *msg, ...)
 {
@@ -109,6 +139,10 @@ void debug(const char *msg, ...)
 	fflush(log);
 }
 
+/*
+ * Mangling / unmangling data to avoid problematic characters
+ */
+
 #define GETBIT(v,n) ((v[(n)/8] >> ((n)&7)) & 1)
 #define SETBIT(v,n,bit) v[(n)/8] = ((v[(n)/8] & ~(1<<((n)&7))) | ((bit) << ((n)&7)))
 
@@ -145,6 +179,23 @@ static unsigned int demangle(uchar* in, unsigned char len)
 	return l;
 }
 
+/*
+ * Functions to handle commands
+ */
+
+static int get_int(uchar *s)
+{
+	return (((int) s[0]) << 24) | (((int) s[1]) << 16) | (((int) s[2]) << 8) | ((int) s[3]);
+}
+
+static void put_int(uchar *d, int i)
+{
+	d[0] = (i >> 24) & 0xff;
+	d[1] = (i >> 16) & 0xff;
+	d[2] = (i >>  8) & 0xff;
+	d[3] = (i >>  0) & 0xff;
+}
+
 static void mywrite(int fd, const uchar *data, unsigned int len)
 {
 	int n = len;
@@ -166,15 +217,21 @@ static void sendCommand(int fd, CommandType type, int channel, int port)
 	uchar pack[32];
 	unsigned int l;
 
+	pack[2] = 0;	/* channel data == 0, control */
+	pack[3] = type;
+	pack[4] = channel;
+	pack[5] = port >> 8;
+	pack[6] = port & 0xff;
+	l = mangle(pack + 2, 5);
+
 	pack[0] = magic;
-	pack[1] = 32;
-	pack[2] = type;
-	pack[3] = channel;
-	pack[4] = port >> 8;
-	pack[5] = port & 0xff;
-	l = 2 + mangle(pack + 2, 4);
-	mywrite(fd, pack, l);
+	pack[1] = 32 + l;
+	mywrite(fd, pack, l + 2);
 }
+
+/*
+ * Channels utility
+ */
 
 static channel* getChannel(ChannelType type, int n, int fd)
 {
@@ -257,8 +314,10 @@ static void sendInitChannels(void)
 	FOREACH_CHANNEL_END
 }
 
-static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_set *fds_error)
+static int channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_set *fds_error)
 {
+	int res;
+
 	FOREACH_CHANNEL_BEGIN
 		if (ch->type == Listen && !ch->blocked) {
 			FD_SET(ch->fd, fds_read);
@@ -270,7 +329,12 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 		}
 	FOREACH_CHANNEL_END
 
-	select(max_fd + 1, fds_read, fds_write, fds_error, NULL);
+	res = select(max_fd + 1, fds_read, fds_write, fds_error, NULL);
+	if (res < 0) {
+		if (errno != EINTR)
+			fatal("select error %s", strerror(errno));
+		return res;
+	}
 
 	FOREACH_CHANNEL_BEGIN
 		if (ch->type == Listen && !ch->blocked) {
@@ -322,7 +386,13 @@ static void channelsSelect(int max_fd, fd_set *fds_read, fd_set *fds_write, fd_s
 			}
 		}
 	FOREACH_CHANNEL_END
+
+	return res;
 }
+
+/*
+ * Functions for parameters handling
+ */
 
 static void addLocal(const char *arg)
 {
@@ -373,30 +443,31 @@ static void addRemote(const char *arg)
 	ch->ip = inet_addr(ip);
 }
 
+/*
+ * Parsing functions
+ */
+
 static void parseControl(void)
 {
-	int nch, och;
+	int och;
 	uchar type;
 	int port;
 	channel *ch;
 	struct sockaddr_in sin;
-                                                                                                                                               
-	nch = control[1];
-	control_len -= 2;
-	memmove(control, control + 2, control_len);
-	control_len = demangle(control, control_len);
 
-	/* just data */
-	if (nch != 32) {
-		nch = control[0];
-		ch = &channels[nch];
-		mywrite(ch->fd, control + 1, control_len - 1);
+	/* FIXME possible buffer overflow */
+	control_len = 2 + demangle(control + 2, control_len - 2);
+
+	/* just data, channel != 0 */
+	if (control[2] != 0) {
+		ch = &channels[control[2]];
+		mywrite(ch->fd, control + 3, control_len - 3);
 		return;
 	}
 
-	type = control[0];
-	och  = control[1];
-	port = (((int) control[2]) << 8) | control[3];
+	type = control[3];
+	och  = control[4];
+	port = (((int) control[5]) << 8) | control[6];
 
 	/* command */
 	switch (type) {
@@ -511,6 +582,16 @@ static void parseControl(void)
 		deleteChannel(och);
 		break;
 
+	case CmdWindowChanged:
+		/* only server */
+		if (client)
+			break;
+		/* TODO only for TTY */
+		pty_change_window_size(WRITE, get_int(&control[ 4]),
+				       get_int(&control[ 8]), get_int(&control[12]),
+				       get_int(&control[16]));
+		break;
+
 	case CmdShutdown:
 		/* deinitialize */
 		if (client) {
@@ -557,12 +638,12 @@ static unsigned int process(uchar *data, unsigned int len)
 					n -= 32;
 					if (n < 0) n = 0;
 					/* it's just a magic character quoted ?? */
-					if (n == 1) {
+					if (n == 0) {
 						*pdst++ = magic;
 						control_len = 0;
 						continue;
 					}
-					controlLen = (n == 0) ? 7 : n + 2;
+					controlLen = n + 2;
 					continue;
 				}
 				debug("parsing control...\n");
@@ -578,6 +659,8 @@ static unsigned int process(uchar *data, unsigned int len)
 					debug("Got initialization request\n");
 					sendInitChannels();
 					initialized = 1;
+					window_changed = 1;
+					check_window_change();
 				}
 			} else {
 				magicInitPos = 0;
@@ -601,6 +684,51 @@ static unsigned int process(uchar *data, unsigned int len)
 	return pdst - res;
 }
 
+/*
+ * Signal handling
+ */
+
+static void signal_stop(int sig)
+{
+	must_quit = 1;
+}
+
+static void signal_window_change(int sig)
+{
+	window_changed = 1;
+	signal(SIGWINCH, signal_window_change);
+}
+
+static void check_window_change(void)
+{
+	uchar pack[64];
+	unsigned int l;
+	struct winsize ws;
+
+	if (!window_changed)
+		return;
+	window_changed = 0;
+
+	if (ioctl(fileno(stdin), TIOCGWINSZ, &ws) < 0)
+		return;
+	ioctl(WRITE, TIOCSWINSZ, &ws);
+
+	if (!initialized)
+		return;
+
+	pack[2] = 0;    /* channel data == 0, control */
+	pack[3] = CmdWindowChanged;
+	put_int(&pack[ 4], ws.ws_row);
+	put_int(&pack[ 8], ws.ws_col);
+	put_int(&pack[12], ws.ws_xpixel);
+	put_int(&pack[16], ws.ws_ypixel);
+	l = mangle(pack + 2, 18);
+
+	pack[0] = magic;
+	pack[1] = 32 + l;
+	mywrite(WRITE, pack, l + 2);
+}
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -608,6 +736,7 @@ int main(int argc, char **argv)
 	char *p;
 	int ptyfd, ttyfd;
 	char ttyname[128];
+	int channel_options = 0;
 
 	/* if argv[0] == shserver default server */
 	arg = strrchr(argv[0], '/');
@@ -618,26 +747,41 @@ int main(int argc, char **argv)
 	if (strncmp(arg, "shserver", 8) == 0)
 		client = 0;
 
-	/* TODO parameter for log, help, magic change */
+	/* TODO parameter for log, magic change (warning for unsafe chars) */
 	for (i = 1; i < argc; ++i) {
 		arg = argv[i];
 		if (strcmp(arg, "-L") == 0) {
-			if (++i >= argc) fatal("parameter expected");
+			if (++i >= argc) fatal("argument expected");
 			addLocal(argv[i]);
+			channel_options = 1;
 		} else if (strcmp(arg, "-R") == 0) {
-			if (++i >= argc) fatal("parameter expected");
+			if (++i >= argc) fatal("argument expected");
 			addRemote(argv[i]);
+			channel_options = 1;
 		} else if (strcmp(arg, "--server") == 0) {
 			client = 0;
 		} else if (strcmp(arg, "--shell") == 0) {
-			if (++i >= argc) fatal("parameter expected");
+			if (++i >= argc) fatal("argument expected");
 			shellCmd = argv[i];
 		} else if (strcmp(arg, "--debug") == 0) {
 			debugEnabled = 1;
+		} else if (strcmp(arg, "--help") == 0) {
+			fprintf(stderr, "Usage: shtunnel [options] [server]\n"
+				"Options:\n"
+				" --server                  act as server\n"
+				" --shell <cmd>             specify shell command\n"
+				" -L <port>::<port>         redirect (see ssh(1))\n"
+				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n");
+			return 0;
 		} else {
 			server = arg;
 		}
 	}
+
+	fprintf(stderr, "shtunnel " VERSION "\n"
+		"Copyright (C) 2004 Frediano Ziglio\n"
+		"This is free software; see the source for copying conditions.  There is NO\n"
+		"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
 
 	if (client) {
 		if (!server)
@@ -646,9 +790,16 @@ int main(int argc, char **argv)
 		
 		if (!shellCmd)
 			shellCmd = "ssh";
+
+		initChannels();
 	} else {
 		server = "";
 		initialized = 1;
+		if (channel_options) {
+			fprintf(stderr, "channel options ignored on server\n");
+			fflush(stderr);
+			memset(channels, 0, sizeof(channels));
+		}
 		strcpy(endPoint, "server");
 
 		/* get user shell*/
@@ -657,8 +808,6 @@ int main(int argc, char **argv)
 			shellCmd = strdup(pw->pw_shell);
 		}
 	}
-
-	initChannels();
 
 	/* TODO do not allocate a pty if from a pipe */
 	/*
@@ -673,13 +822,13 @@ int main(int argc, char **argv)
 
 	/* init request must be send after switching to raw to avoid echo */
 	if (!client) {
-		uchar buf[256];
+		uchar buf[MAGIC_PREFIX_LEN + sizeof(magicInit)];
 		int i;
 
 		for (i = 0; i < MAGIC_PREFIX_LEN; ++i)
 			buf[i] = magic;
 		strcpy(buf + MAGIC_PREFIX_LEN, magicInit);
-		mywrite(STDOUT, buf, strlen(buf));
+		mywrite(STDOUT, buf, MAGIC_PREFIX_LEN + strlen(magicInit));
 	}
 
 	/* TODO on exit close child and reset terminal */
@@ -721,11 +870,22 @@ int main(int argc, char **argv)
 		fatal("duplicating pty");
 	WRITE = ptyfd;
 
-	/* TODO add support for SIGINT SIGTERM SIGSTOP SIGWINCH (window size change) */
+	/* TODO finish support for SIGINT SIGTERM SIGSTOP */
 	signal(SIGPIPE, SIG_IGN);
 	/* TODO see ssh.c for how to handle SIGINT and SIGTERM correctly */
 	if (!client)
 		signal(SIGINT, SIG_IGN);
+
+	if (client) {
+		signal(SIGINT, signal_stop);
+		signal(SIGQUIT, signal_stop);
+		signal(SIGTERM, signal_stop);
+
+		/* TODO only for TTY */
+		signal(SIGWINCH, signal_window_change);
+
+		window_changed = 1;
+	}
 
 	control_len = 0;
 
@@ -747,7 +907,16 @@ int main(int argc, char **argv)
 		if (READ > max_fd) max_fd = READ;
 		if (WRITE > max_fd) max_fd = WRITE;
 
-		channelsSelect(max_fd, &fds_read, &fds_write, &fds_error);
+		if (must_quit)
+			break;
+		check_window_change();
+
+		if (channelsSelect(max_fd, &fds_read, &fds_write, &fds_error) < 0)
+			continue;
+
+		if (must_quit)
+			break;
+		check_window_change();
 
 		/*
 		 * TODO if no space to write do not read from channels
@@ -768,6 +937,7 @@ int main(int argc, char **argv)
 				debug("\nfrom client='%s'", data);
 			if (!client)
 				res = process(data, res);
+			/* TODO quote magic */
 			mywrite(WRITE, data, res);
 		}
 
@@ -780,9 +950,14 @@ int main(int argc, char **argv)
 			debug("\norig='%s'", data);
 			if (client)
 				res = process(data, res);
+			/* TODO quote magic */
 			mywrite(STDOUT, data, res);
 		}
 	}
 
-	return 1;
+	if (!client)
+		sendCommand(STDOUT, CmdShutdown, 0, 0);
+	leave_raw_mode();
+
+	return 0;
 }
