@@ -2,6 +2,7 @@
 
 use IO::Handle;
 use Socket;
+use POSIX;
 #use strict;
 
 $magic = "\xF0";
@@ -70,6 +71,22 @@ sub commandPack($$$)
 	return $magic.' '.mangle(pack('CCn', $type, $ch, $port));
 }
 
+sub mywrite
+{
+	my ($fh, $data) = @_;
+	my $n = length($data);
+	my $res;
+	while($n > 0) {
+		do {
+			$res = syswrite($fh, $data);
+		} until(defined($res) || $! != EINTR);
+		last if ($res <= 0 || $res >= $n);
+		$data = substr($data, $res);
+		$n = length($data);
+		sleep 1;
+	}
+}
+
 sub getChannel
 {
 	my ($type, $n) = @_;
@@ -117,7 +134,7 @@ sub sendInitChannels
 		if ($ch->{type} eq 'connect') {
 			# TODO write all
 			debug("send listen request for port".$ch->{remote});
-			syswrite WRITE, commandPack(51, $ch->{number}, $ch->{remote});
+			mywrite(WRITE, commandPack(51, $ch->{number}, $ch->{remote}));
 		}
 	}
 }
@@ -145,7 +162,7 @@ sub channelsSelect
 					my $ofh = $och->{fh};
 					accept($ofh,$fh) || die "accept $!";
 					if ($initialized) {
-						syswrite(WRITE, commandPack(52, $och->{number}, $ch->{remote}));
+						mywrite(WRITE, commandPack(52, $och->{number}, $ch->{remote}));
 					} else {
 						deleteChannel($och->{number});
 					}
@@ -154,13 +171,16 @@ sub channelsSelect
 					accept($ofh,$fh) || die "accept $!";
 					$ch->{blocked} = 1;
 					$ch->{accepted} = $ofh;
-					syswrite(STDOUT, commandPack(52, $ch->{number}, 0));
+					mywrite(STDOUT, commandPack(52, $ch->{number}, 0));
 				}
 			}
 		} elsif ($ch->{type} eq 'connected' && $ch->{connected}) {
 			if (vec($read, $f, 1)) {
 				my $r = '';
-				sysread $fh, $r, 64;
+				my $res;
+				do { 
+					$res = sysread($fh, $r, 64);
+				} until(defined($res) || $! != EINTR);
 				if (!length($r)) {
 					# connection closed, send close command
 					deleteChannel($ch->{number});
@@ -170,9 +190,9 @@ sub channelsSelect
 					$r = pack('aC',$magic, 32+length($r)).$r;
 				}
 				if ($client) {
-					syswrite WRITE, $r;
+					mywrite(WRITE, $r);
 				} else {
-					syswrite STDOUT, $r;
+					mywrite(STDOUT, $r);
 				}
 			}
 		}
@@ -218,7 +238,7 @@ if ($client) {
 	$endPoint = 'client';
 } else {
 	$server = '';
-	syswrite(STDOUT, $magicInit);
+	mywrite(STDOUT, $magicInit);
 	$initialized = 1;
 	$endPoint = 'server';
 }
@@ -232,7 +252,6 @@ WRITE->autoflush(1);
 $| = 1;
 
 # disable tty cache line
-use POSIX;
 $term = POSIX::Termios->new;
 $term->getattr(fileno(STDIN));
 
@@ -285,7 +304,7 @@ sub parseControl
 	if ($nch != 32) {
 		($nch) = unpack('C',$control);
 		my $ch = $channels{$nch};
-		syswrite $ch->{fh}, substr($control,1);
+		mywrite($ch->{fh}, substr($control,1));
 		return;
 	}
 
@@ -313,24 +332,24 @@ sub parseControl
 			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, $channels{$och}->{ip}))) {
 				$nch->{connected} = 1;
 				debug("\nrichiesta connessione accettata\n");
-				my $res = syswrite WRITE, commandPack(53, $och, $nch->{number});
+				my $res = mywrite(WRITE, commandPack(53, $och, $nch->{number}));
 				debug("res=$res");
 			} else {
 				debug("\nrichiesta connessione rifiutata\n");
 				deleteChannel($nch->{number});
-				syswrite WRITE, commandPack(53, $och, 0);
+				mywrite(WRITE, commandPack(53, $och, 0));
 			}
 		} else {
 			my $nch = getChannel('connected',$och) or die('No more channels');
 			socket($nch->{fh}, &PF_INET, &SOCK_STREAM, 0) || die "socket: $!";
 			if (connect($nch->{fh}, pack($sockaddr, &AF_INET, $port, "\x7f\0\0\x01"))) {
 				debug("connected to port $port");
-				syswrite(STDOUT, commandPack(53, $och, $och));
+				mywrite(STDOUT, commandPack(53, $och, $och));
 				$nch->{connected} = 1;
 			} else {
 				debug("error connecting to port $port");
 				deleteChannel($nch->{number});
-				syswrite STDOUT, commandPack(53, $och, 0);
+				mywrite(STDOUT, commandPack(53, $och, 0));
 			}
 		}
 	} elsif ($type == 53) {
@@ -446,7 +465,7 @@ while() {
 		die("broken pipe $endPoint") if (!length($l));
 		debug("\nfrom client=".join(',',unpack('C*',$l))."\n") if (!$client);
 		$l = process($l) if (!$client);
-		syswrite(WRITE, $l);
+		mywrite(WRITE, $l);
 	}
 
 	$f = fileno(READ);
@@ -455,6 +474,6 @@ while() {
 		die("broken pipe $endPoint") if (!length($l));
 		debug("\norig=".join(',',unpack('C*',$l))."\n");
 		$l = process($l) if ($client);
-		syswrite(STDOUT,$l);
+		mywrite(STDOUT,$l);
 	}
 }
