@@ -98,10 +98,12 @@ to 5678                                 accept socket connection
 
          try to connect  
            on success    ACCEPT(1,2)    new "connected" channel
-        (2=new channel)  ---------->    unblock "listen" channel
+           (2 new        ---------->    unblock "listen" channel
+         "connected" 
+           channel)
 
-           on failure   ACCEPT(1,0)     unblock "listen"
-          (0 channel)   ------------->  close connection
+           on failure    ACCEPT(1,0)    unblock "listen"
+          (0 as channel) ------------>  close connection
 --------------------------------------------------------------
 Closed socket
 on port 5678
@@ -116,6 +118,57 @@ on client
 --------------------------------------------------------------
 
 Closing channel close socket too.
+
+Client wants a connection to server
+===================================
+
+Command: shtunnel -L 1234::5678 user@server
+1234 local port
+5678 remote port
+
+              CLIENT                     SERVER
+init         allocate
+             "listen"
+             channel
+------------------------------------------------------------
+connection accept connectio
+to client  new "connected"
+port 5678  channel
+           not connected
+           state
+           (2 new channel) CONNECT(2,1234) open connection
+                           -------------> 
+                                           on success
+                           ACCEPT(2,2)     open new channel
+           set state to    <----------
+           connected
+                                           on failure
+                           ACCEPT(2,0)     close socket
+           close channel   <----------
+--------------------------------------------------------------
+Closing have same bahaviur
+
+Channel types
+=============
+
+listen
+- socket
+- channel
+(if server)
+- remote port
+(if client)
+
+connect (only client)
+- port to connect
+- channel
+(to receive connection)
+- listen port
+(to init remote)
+
+connected
+- socket
+- channel
+(if connected)
 
 New perl mangle
 ===============
