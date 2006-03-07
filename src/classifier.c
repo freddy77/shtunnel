@@ -2,6 +2,9 @@
 #include <assert.h>
 #include "sshpty.h"
 
+static volatile int got_alarm = 0;
+static pid_t child_pid = 0;
+
 void fatal(const char *msg, ...)
 {
 	va_list ap;
@@ -131,6 +134,16 @@ my_pipe(pipe_t *p, int num)
 	return res;
 }
 
+static void
+kill_child(int sig_num)
+{
+	got_alarm = 1;
+	alarm(0);
+	if (child_pid)
+		kill(child_pid, SIGKILL);
+	child_pid = 0;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -141,6 +154,7 @@ main(int argc, char **argv)
 	int ret;
 	int cur_pipe = -1;
 	int nice_res;
+	int timeout = -1;
 	pid_t pid;
 
 	ret = 0;
@@ -151,19 +165,35 @@ main(int argc, char **argv)
 				ret = 1;
 			--argc;
 			++argv;
+		} else if (strncmp(argv[1], "--timeout=", 10) == 0) {
+			timeout = atoi(argv[1] + 10);
+			if (timeout <= 0)
+				ret = 1;
+			--argc;
+			++argv;
 		} else if (strcmp(argv[1], "--color") == 0) {
 			use_color = 1;
 			--argc;
 			++argv;
+		} else if (strcmp(argv[1], "--no-buffering") == 0) {
+			setbuf(stdout, NULL);
+			--argc;
+			++argv;
+		} else if (strcmp(argv[1], "--") == 0) {
+			/* stop parsing argument */
+			--argc;
+			++argv;
+			break;
 		} else
 			break;
 	}
 
 	if (ret || argc < 2)
-		fatal("Syntax: classifier [--color] [--num-fd=xx] command [arg] ...\n"
+		fatal("Syntax: classifier [OPTION]... command [arg] ...\n"
 			"\t--num-fd=xx\tNumber of stream to handle [2-%d]\n"
-			"\t--color\tUse colors for output", MAX_STREAMS);
-
+			"\t--color\tUse colors for output\n"
+			"\t--no-buffering\tDo not buffer output\n"
+			"\t--timeout=xx\tTimeout in seconds", MAX_STREAMS);
 	
 	for (i = 0; i < num_pipe; ++i) {
 		if (my_pipe(&pipes[i], i + 1))
@@ -174,7 +204,8 @@ main(int argc, char **argv)
 	nice_res = nice(-2);
 
 	/* execute sub process */
-	switch (fork()) {
+	child_pid = fork();
+	switch (child_pid) {
 	case 0:
 		for (i = 0; i < num_pipe; ++i) {
 			/* close reading pipes */
@@ -211,8 +242,14 @@ main(int argc, char **argv)
 	/* ignore closing pipe */
 	signal(SIGPIPE, SIG_IGN);
 
+	/* set alarm for timeout */
+	if (timeout > 0) {
+		signal(SIGALRM, kill_child);
+		alarm(timeout);
+	}
+
 	/* wait data from our child */
-	for (;;) {
+	for (;!got_alarm;) {
 		fd_set fds_read;
 		int res;
 
