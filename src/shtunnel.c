@@ -1077,11 +1077,9 @@ int main(int argc, char **argv)
 	/* init request must be send after switching to raw to avoid echo */
 	if (!client) {
 		uchar buf[MAGIC_PREFIX_LEN + sizeof(magicInit)];
-		int i;
 
-		for (i = 0; i < MAGIC_PREFIX_LEN; ++i)
-			buf[i] = magic;
-		strcpy(buf + MAGIC_PREFIX_LEN, magicInit);
+		memset(buf, magic, MAGIC_PREFIX_LEN);
+		memcpy(buf + MAGIC_PREFIX_LEN, magicInit, strlen(magicInit));
 		mywrite(STDOUT, buf, MAGIC_PREFIX_LEN + strlen(magicInit));
 	}
 
@@ -1174,7 +1172,7 @@ int main(int argc, char **argv)
 			fatal("WRITE");
 
 		if (FD_ISSET(STDIN, &fds_read)) {
-			char data[MAX_DATA_LEN];
+			uchar data[MAX_DATA_LEN];
 			ssize_t res = read(STDIN, data, MAX_DATA_LEN);
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
@@ -1188,7 +1186,7 @@ int main(int argc, char **argv)
 		}
 
 		if (FD_ISSET(READ, &fds_read)) {
-			char data[MAX_DATA_LEN];
+			uchar data[MAX_DATA_LEN];
 			ssize_t res = read(READ, data, MAX_DATA_LEN);
 			if (res <= 0)
 				fatal("broken pipe %s", endPoint);
