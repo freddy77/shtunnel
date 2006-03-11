@@ -68,7 +68,6 @@ static channel channels[256];
 #define FOREACH_CHANNEL_BEGIN {channel *ch; for (ch = channels; ch != channels + (sizeof(channels)/sizeof(channels[0])); ++ch) {
 #define FOREACH_CHANNEL_END   }}
 
-static const char *server = NULL;
 static int client = 1;
 static const char *shellCmd = NULL;
 static int initialized = 0;
@@ -775,6 +774,10 @@ static void parseControl(void)
 		/* only server */
 		if (client)
 			break;
+		if (!initialized) {
+			initialized = 1;
+			while (write(WRITE, "i", 1) < 0 && errno == EINTR);
+		}
 		/* TODO only for TTY */
 		pty_change_window_size(WRITE, get_int(&control[ 4]),
 				       get_int(&control[ 8]), get_int(&control[12]),
@@ -881,7 +884,7 @@ static unsigned int process(uchar *data, unsigned int len)
 		if (c == magic) {
 			if (++magicCharCount >= MAGIC_PREFIX_LEN)
 				magicInitPos = MAGIC_PREFIX_LEN;
-			if (initialized) {
+			if (!client || initialized) {
 				controlLen = 2;
 				control[0] = c;
 				control_len = 1;
@@ -901,7 +904,7 @@ static void write_data(int fd, const uchar* data, unsigned int len)
 {
 	const uchar c = 32;
 
-	if (!initialized) {
+	if (client && !initialized) {
 		mywrite(fd, data, len);
 		return;
 	}
@@ -935,13 +938,23 @@ static void signal_stop(int sig)
 
 static void signal_child(int sig)
 {
-	int save_errno = errno;
+	int save_errno = errno, status;
 	pid_t pid;
 
 	signal_exit = sig;
-	must_quit = 1;
 
-	while ((pid = waitpid(-1, &child_status, 0)) < 0 && errno == EINTR);
+	while ((pid = waitpid(-1, &status, WNOHANG)) > 0 ||
+	       (pid < 0 && errno == EINTR))
+	{
+		if (pid <= 0)
+			continue;
+		if (WIFEXITED(status) || WIFSIGNALED(status)) {
+			must_quit = 1;
+			child_status = status;
+			break;
+		}
+		signal(SIGCHLD, signal_child);
+	}
 
 	errno = save_errno;
 }
@@ -982,15 +995,14 @@ static void check_window_change(void)
 	mywrite(WRITE, pack, l + 2);
 }
 
-int main(int argc, char **argv)
+static int channel_options = 0;
+
+static int parse_arguments(int argc, char **argv)
 {
 	int i;
-	const char* arg;
-	char *p;
-	int ptyfd, ttyfd;
-	char ttyname[128];
-	int channel_options = 0;
-
+	char* arg;
+	char **end_no_options;
+	
 	/* if argv[0] == shserver default server */
 	arg = strrchr(argv[0], '/');
 	if (!arg)
@@ -1000,45 +1012,110 @@ int main(int argc, char **argv)
 	if (strncmp(arg, "shserver", 8) == 0)
 		client = 0;
 
+
 	/* TODO parameter for log, magic change (warning for unsafe chars) */
+	end_no_options = argv + 1;
 	for (i = 1; i < argc; ++i) {
 		arg = argv[i];
-		if (strcmp(arg, "-L") == 0) {
+		if (arg[0] != '-') {
+			*end_no_options++ = arg;
+			continue;
+		}
+		++arg;
+		if (!arg[0] || strcmp(arg, "-") == 0) {
+			while (++i < argc)
+				*end_no_options++ = argv[i];
+			break;
+		} else if (strcmp(arg, "L") == 0) {
 			if (++i >= argc) fatal("argument expected");
 			addLocal(argv[i]);
 			channel_options = 1;
-		} else if (strcmp(arg, "-R") == 0) {
+		} else if (strcmp(arg, "R") == 0) {
 			if (++i >= argc) fatal("argument expected");
 			addRemote(argv[i]);
 			channel_options = 1;
-		} else if (strcmp(arg, "--server") == 0) {
+		} else if (strcmp(arg, "-server") == 0) {
 			client = 0;
-		} else if (strcmp(arg, "--shell") == 0) {
+		} else if (strcmp(arg, "-shell") == 0) {
 			if (++i >= argc) fatal("argument expected");
 			shellCmd = argv[i];
-		} else if (strcmp(arg, "--debug") == 0) {
+		} else if (strcmp(arg, "-debug") == 0) {
 			debugEnabled = 1;
-		} else if (strcmp(arg, "--help") == 0) {
+		} else if (strcmp(arg, "-help") == 0) {
 			fprintf(stderr, "Usage: shtunnel [options] [server]\n"
 				"Options:\n"
 				" --server                  act as server\n"
 				" --shell <cmd>             specify shell command\n"
 				" -L <port>::<port>         redirect (see ssh(1))\n"
 				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n");
-			return 0;
-		} else if (strcmp(arg, "--version") == 0) {
+			exit(0);
+		} else if (strcmp(arg, "-version") == 0) {
 			fprintf(stderr, "shtunnel " VERSION "\n"
 				"Copyright (C) 2004 Frediano Ziglio\n"
 				"This is free software; see the source for copying conditions.  There is NO\n"
 				"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
-			return 0;
+			exit(0);
 		} else {
-			server = arg;
+			fatal("unrecognized option '-%s'\n", arg);
 		}
 	}
+	return end_no_options - argv;
+}
+
+static size_t quote_argument(char *dest, const char *arg)
+{
+	char *pdst = dest;
+
+	if (!dest) {
+		size_t len = 2;
+
+		for (;*arg; ++arg, ++len)
+			if (strchr("$\"`\\", *arg))
+				++len;
+		return len;
+	}
+
+	*pdst++ = '\"';
+	for (;*arg; ++arg) {
+		if (strchr("$\"`\\", *arg))
+			*pdst++ = '\\';
+		*pdst++ = *arg;
+	}
+	*pdst++ = '\"';
+	*pdst = 0;
+	return pdst - dest;
+}
+
+static size_t quote_arguments(char *dest, char **args, int num_arg)
+{
+	char *pdst = dest;
+	int i;
+
+	if (!dest) {
+		size_t len = num_arg;
+		for (i = 0; i < num_arg; ++i)
+			len += quote_argument(NULL, args[i]);
+		return len;
+	}
+
+	for (i = 0; i < num_arg; ++i) {
+		*pdst++ = ' ';
+		pdst += quote_argument(pdst, args[i]);
+	}
+	*pdst = 0;
+	return pdst - dest;
+}
+
+int main(int argc, char **argv)
+{
+	char *p;
+	int ptyfd, ttyfd;
+	char ttyname[128];
+
+	argc = parse_arguments(argc, argv);
 
 	if (client) {
-		if (!server)
+		if (argc < 2)
 			fatal("server option needed");
 		strcpy(endPoint, "client");
 		
@@ -1047,8 +1124,6 @@ int main(int argc, char **argv)
 
 		initChannels();
 	} else {
-		server = "";
-		initialized = 1;
 		if (channel_options) {
 			fprintf(stderr, "channel options ignored on server\n");
 			fflush(stderr);
@@ -1107,9 +1182,21 @@ int main(int argc, char **argv)
 
 		leave_raw_mode();
 
+		/* wait initialization */
+		enter_raw_mode();
+		if (!client) {
+			char c;
+			ssize_t len;
+			while ((len = read(0, &c, 1)) < 0 && errno == EINTR);
+			if (len <= 0)
+				return 1;
+		}
+		leave_raw_mode();
+
 		/* TODO parse parameters instead of using an extra shell */
-		p = malloc(strlen(server) + strlen(shellCmd) + 10);
-		sprintf(p, "%s %s", shellCmd, server);
+		p = malloc(strlen(shellCmd) + quote_arguments(NULL, argv + 1, argc - 1) + 10);
+		strcpy(p, shellCmd);
+		quote_arguments(strchr(p, 0), argv + 1, argc - 1);
 		execlp("sh", "sh", "-c", p, NULL);
 		return 1;
 		break;
@@ -1143,12 +1230,14 @@ int main(int argc, char **argv)
 
 		FD_ZERO(&fds_read);
 		FD_SET(STDIN, &fds_read);
-		FD_SET(READ, &fds_read);
+		if (READ >= 0)
+			FD_SET(READ, &fds_read);
 
 		FD_ZERO(&fds_write);
 
 		FD_ZERO(&fds_error);
-		FD_SET(READ, &fds_error);
+		if (READ >= 0)
+			FD_SET(READ, &fds_error);
 		FD_SET(WRITE, &fds_error);
 
 		if (STDIN > max_fd) max_fd = STDIN;
@@ -1166,7 +1255,7 @@ int main(int argc, char **argv)
 			break;
 		check_window_change();
 
-		if (FD_ISSET(READ, &fds_error))
+		if (READ >= 0 && FD_ISSET(READ, &fds_error))
 			fatal("READ");
 		if (FD_ISSET(WRITE, &fds_error))
 			fatal("WRITE");
@@ -1174,22 +1263,32 @@ int main(int argc, char **argv)
 		if (FD_ISSET(STDIN, &fds_read)) {
 			uchar data[MAX_DATA_LEN];
 			ssize_t res = read(STDIN, data, MAX_DATA_LEN);
-			if (res <= 0)
-				fatal("broken pipe %s", endPoint);
+			if (res <= 0) {
+				/* this can be caused by redirection of standard input on client */
+				fatal("broken pipe input %s", endPoint);
+			}
 			debug_dump(client ? "data from input" : "data from client", data, res);
 			if (client) {
 				write_data(WRITE, data, res);
 			} else {
 				res = process(data, res);
+				/* TODO if not initialized we should not write data but buffer and send when ready */
+				/* use blocking socket ?? */
 				mywrite(WRITE, data, res);
 			}
 		}
 
-		if (FD_ISSET(READ, &fds_read)) {
+		if (READ >= 0 && FD_ISSET(READ, &fds_read)) {
 			uchar data[MAX_DATA_LEN];
 			ssize_t res = read(READ, data, MAX_DATA_LEN);
-			if (res <= 0)
-				fatal("broken pipe %s", endPoint);
+			if (res <= 0) {
+				debug("broken pipe %s", endPoint);
+
+				/* this can be caused by program termination */
+				close(READ);
+				READ = -1;
+				continue;
+			}
 			debug_dump(client ? "data from server" : "data from program", data, res);
 			if (client) {
 				res = process(data, res);
@@ -1205,8 +1304,12 @@ int main(int argc, char **argv)
 	leave_raw_mode();
 
 	/* pass code from child process */
-	if (signal_exit == SIGCHLD)
-		return WIFEXITED(child_status) ? WEXITSTATUS(child_status) : 1;
+	if (signal_exit == SIGCHLD) {
+		if (WIFEXITED(child_status))
+			return WEXITSTATUS(child_status);
+		if (WIFSIGNALED(child_status))
+			return 1;
+	}
 
 	return 0;
 }

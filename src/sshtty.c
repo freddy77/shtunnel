@@ -53,18 +53,21 @@ leave_raw_mode(void)
 {
 	if (!_in_raw_mode)
 		return;
+	signal(SIGTTOU, SIG_IGN);
 	if (tcsetattr(fileno(stdin), TCSADRAIN, &_saved_tio) == -1)
 		perror("tcsetattr");
 	else
 		_in_raw_mode = 0;
+	signal(SIGTTOU, SIG_DFL);
 }
 
 void
 enter_raw_mode(void)
 {
 	struct termios tio;
+	int fd_in = fileno(stdin);
 
-	if (tcgetattr(fileno(stdin), &tio) == -1) {
+	if (tcgetattr(fd_in, &tio) == -1) {
 		perror("tcgetattr");
 		return;
 	}
@@ -81,8 +84,10 @@ enter_raw_mode(void)
 	tio.c_oflag &= ~OPOST;
 	tio.c_cc[VMIN] = 1;
 	tio.c_cc[VTIME] = 0;
-	if (tcsetattr(fileno(stdin), TCSADRAIN, &tio) == -1)
+	signal(SIGTTOU, SIG_IGN);
+	if (tcsetattr(fd_in, TCSADRAIN, &tio) == -1)
 		perror("tcsetattr");
 	else
 		_in_raw_mode = 1;
+	signal(SIGTTOU, SIG_DFL);
 }
