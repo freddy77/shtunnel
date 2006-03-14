@@ -7,3 +7,7 @@
 . ip v6 ??
 . port to win ?? Use cygwin
 . ftp emulation ??
+
+tests:
+. long output should not be truncated for buffer problem, consider
+  ./src/shtunnel -L 12345::23456 localhost cat $PWD/src/shtunnel.c

@@ -93,6 +93,7 @@ static int control_len = 0;
 static volatile int must_quit;
 /* program have received a windows change */
 static volatile int window_changed;
+static volatile int child_exited;
 
 static void sendCommand(int fd, CommandType type, int channel, int port);
 static void check_window_change(void);
@@ -949,7 +950,7 @@ static void signal_child(int sig)
 		if (pid <= 0)
 			continue;
 		if (WIFEXITED(status) || WIFSIGNALED(status)) {
-			must_quit = 1;
+			child_exited = 1;
 			child_status = status;
 			break;
 		}
@@ -1244,14 +1245,14 @@ int main(int argc, char **argv)
 		if (READ > max_fd) max_fd = READ;
 		if (WRITE > max_fd) max_fd = WRITE;
 
-		if (must_quit)
+		if (must_quit || (child_exited && READ < 0))
 			break;
 		check_window_change();
 
 		if (channelsSelect(max_fd, &fds_read, &fds_write, &fds_error) < 0)
 			continue;
 
-		if (must_quit)
+		if (must_quit || (child_exited && READ < 0))
 			break;
 		check_window_change();
 
