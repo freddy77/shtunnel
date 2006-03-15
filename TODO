@@ -11,3 +11,11 @@
 tests:
 . long output should not be truncated for buffer problem, consider
   ./src/shtunnel -L 12345::23456 localhost cat $PWD/src/shtunnel.c
+. using this command server seems to not catch all characters
+  (connect and hit some char like 'qqqq' without enter)
+  ./src/shtunnel -L 12345::23456 localhost -- $PWD/src/shtunnel --server
+  The problem is that ssh launched by client have tty not in raw mode so
+  it wait for enter to get line and send to server pipe (it do not create
+  a pty for server cause it do not use pty to execute commands)
+  A workaround it to use -t option to ssh (--shell 'ssh -t')
+

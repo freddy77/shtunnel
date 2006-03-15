@@ -1043,16 +1043,20 @@ static int parse_arguments(int argc, char **argv)
 		} else if (strcmp(arg, "-debug") == 0) {
 			debugEnabled = 1;
 		} else if (strcmp(arg, "-help") == 0) {
-			fprintf(stderr, "Usage: shtunnel [options] [server]\n"
+			fprintf(stderr, "Usage: shtunnel [OPTION] .. [server] [ARG] ..\n"
 				"Options:\n"
 				" --server                  act as server\n"
 				" --shell <cmd>             specify shell command\n"
 				" -L <port>::<port>         redirect (see ssh(1))\n"
-				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n");
+				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n"
+				" --debug                   write debug info to log.txt\n"
+				" --help                    this help\n"
+				" --version                 print version information\n"
+				" --                        stop option parsing\n");
 			exit(0);
 		} else if (strcmp(arg, "-version") == 0) {
 			fprintf(stderr, "shtunnel " VERSION "\n"
-				"Copyright (C) 2004 Frediano Ziglio\n"
+				"Copyright (C) 2004-2006 Frediano Ziglio\n"
 				"This is free software; see the source for copying conditions.  There is NO\n"
 				"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n");
 			exit(0);
