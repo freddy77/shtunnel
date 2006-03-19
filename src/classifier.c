@@ -190,11 +190,11 @@ main(int argc, char **argv)
 
 	if (ret || argc < 2)
 		fatal("Syntax: classifier [OPTION]... command [arg] ...\n"
-			"\t--num-fd=xx\tNumber of stream to handle [2-%d]\n"
-			"\t--color\tUse colors for output\n"
-			"\t--no-buffering\tDo not buffer output\n"
-			"\t--timeout=xx\tTimeout in seconds", MAX_STREAMS);
-	
+			"  --num-fd=xx     Number of stream to handle [2-%d]\n"
+			"  --color         Use colors for output\n"
+			"  --no-buffering  Do not buffer output\n"
+			"  --timeout=xx    Timeout in seconds", MAX_STREAMS);
+
 	for (i = 0; i < num_pipe; ++i) {
 		if (my_pipe(&pipes[i], i + 1))
 			fatal("allocating pipes");
