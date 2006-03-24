@@ -282,7 +282,7 @@ main(int argc, char **argv)
 	if (WIFEXITED(ret))
 		return WEXITSTATUS(ret);
 	if (WIFSIGNALED(ret))
-		return 1;
+		return WTERMSIG(ret) + 128;
 
 	return 0;
 }
