@@ -64,10 +64,15 @@ leave_raw_mode(void)
 void
 enter_raw_mode(void)
 {
-	struct termios tio;
-	int fd_in = fileno(stdin);
+	set_raw_mode(fileno(stdin));
+}
 
-	if (tcgetattr(fd_in, &tio) == -1) {
+void
+set_raw_mode(int fd)
+{
+	struct termios tio;
+
+	if (tcgetattr(fd, &tio) == -1) {
 		perror("tcgetattr");
 		return;
 	}
@@ -85,7 +90,7 @@ enter_raw_mode(void)
 	tio.c_cc[VMIN] = 1;
 	tio.c_cc[VTIME] = 0;
 	signal(SIGTTOU, SIG_IGN);
-	if (tcsetattr(fd_in, TCSADRAIN, &tio) == -1)
+	if (tcsetattr(fd, TCSADRAIN, &tio) == -1)
 		perror("tcsetattr");
 	else
 		_in_raw_mode = 1;

@@ -20,6 +20,7 @@
 struct termios get_saved_tio(void);
 void	 leave_raw_mode(void);
 void	 enter_raw_mode(void);
+void     set_raw_mode(int fd);
 
 int	 pty_allocate(int *, int *, char *, int);
 void	 pty_release(const char *);

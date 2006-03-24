@@ -23,3 +23,7 @@ This program was originally written in Perl and after a while translated to C
 with additional feature (like pseudo terminals). See shtunnel and shserver
 perl file (not compatible with C version).
 
+Classifier utility was written to distinguish single output/error streams.
+I find it useful for scripting of support multiple stream even when
+only a single stream is given.
+

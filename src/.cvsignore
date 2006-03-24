@@ -1,7 +1,7 @@
-.cvsignore
 .deps
 Makefile
 Makefile.in
+classifier
 config.h
 config.h.in
 shtunnel

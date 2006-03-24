@@ -2,6 +2,7 @@ Version 0.1.3 - 2006-03-11
 	* better support for SIGCHLD
 	* support multiple parameters
 	* read all data even after SIGCHLD
+	* added classifier utility
 
 Version 0.1.2 - 2004-11-03
 	* pass child code exit to allow scripting
