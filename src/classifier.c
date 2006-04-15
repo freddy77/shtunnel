@@ -49,7 +49,14 @@ void debug(const char *msg, ...)
 	fflush(log);
 }
 
-static int use_color = 0;
+typedef enum {
+	OutType_Normal,
+	OutType_Color,
+	OutType_Html
+} OutType;
+
+static OutType out_type = OutType_Normal;
+static int out_html_full = 0;
 
 typedef struct {
 	int read;
@@ -74,7 +81,7 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 		return res;
 	}
 
-	if (*cur_pipe != pipe->num && *cur_pipe != -1 && !use_color) {
+	if (*cur_pipe != pipe->num && *cur_pipe != -1 && out_type == OutType_Normal) {
 		fprintf(stdout, "\n+");
 		*cur_pipe = -1;
 	}
@@ -83,6 +90,11 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 	p = data;
 	pend = p + res;
 	for (;p != pend;) {
+		/*
+		 * in a string like
+ 		 * "pippo" "\n" "pluto...
+		 * p       nl   next
+		 */
 		char *next;
 		char *nl = (char *) memchr(p, '\n', pend - p);
 		if (!nl) {
@@ -92,22 +104,65 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 			if (nl > p && nl[-1] == '\r')
 				--nl;
 		}
+
+		/* start line */
 		if (*cur_pipe != pipe->num) {
-			if (use_color) {
+			switch (out_type) {
+			case OutType_Color:
 				if (pipe->num == 2)
 					fprintf(stdout, "\x1b[00;31m");
-			} else {
+				break;
+			case OutType_Normal:
 				fprintf(stdout, "%d:", pipe->num);
+				break;
+			case OutType_Html:
+				if (pipe->num == 2)
+					fprintf(stdout, "<span class=\"error\">");
+				else if (pipe->num > 1)
+					fprintf(stdout, "<span class=\"stream%d\">", pipe->num);
+				break;
 			}
 			*cur_pipe = pipe->num;
 		}
-		fwrite(p, 1, nl - p, stdout);
+
+		/* line */
+		if (out_type == OutType_Html) {
+			for (; p != nl; ++p)
+				switch (*p) {
+				case '<':
+					fprintf(stdout, "&lt;");
+					break;
+				case '>':
+					fprintf(stdout, "&gt;");
+					break;
+				case '"':
+					fprintf(stdout, "&quot;");
+					break;
+				default:
+					putc(*p, stdout);
+					break;
+				}
+		} else {
+			fwrite(p, 1, nl - p, stdout);
+		}
 		if (nl == next)
 			break;
-		if (use_color && pipe->num == 2)
-			fprintf(stdout, "\x1b[00m");
+
+		/* end line */
+		switch (out_type) {
+		case OutType_Color:
+			if (pipe->num == 2)
+				fprintf(stdout, "\x1b[00m");
+		case OutType_Normal:
+			break;
+		case OutType_Html:
+			if (pipe->num > 1)
+				fprintf(stdout, "</span>");
+			break;
+		}
 		fwrite(nl, 1, next - nl, stdout);
 		*cur_pipe = -1;
+
 		p = next;
 	}
 	return res;
@@ -163,22 +218,19 @@ main(int argc, char **argv)
 			num_pipe = atoi(argv[1] + 9);
 			if (num_pipe < 2 || num_pipe > MAX_STREAMS)
 				ret = 1;
-			--argc;
-			++argv;
 		} else if (strncmp(argv[1], "--timeout=", 10) == 0) {
 			timeout = atoi(argv[1] + 10);
 			if (timeout <= 0)
 				ret = 1;
-			--argc;
-			++argv;
 		} else if (strcmp(argv[1], "--color") == 0) {
-			use_color = 1;
-			--argc;
-			++argv;
+			out_type = OutType_Color;
+		} else if (strcmp(argv[1], "--html") == 0) {
+			out_type = OutType_Html;
+		} else if (strcmp(argv[1], "--html-full") == 0) {
+			out_type = OutType_Html;
+			out_html_full = 1;
 		} else if (strcmp(argv[1], "--no-buffering") == 0) {
 			setbuf(stdout, NULL);
-			--argc;
-			++argv;
 		} else if (strcmp(argv[1], "--") == 0) {
 			/* stop parsing argument */
 			--argc;
@@ -186,12 +238,17 @@ main(int argc, char **argv)
 			break;
 		} else
 			break;
+
+		--argc;
+		++argv;
 	}
 
 	if (ret || argc < 2)
 		fatal("Syntax: classifier [OPTION]... command [arg] ...\n"
 			"  --num-fd=xx     Number of stream to handle [2-%d]\n"
 			"  --color         Use colors for output\n"
+			"  --html          Use HTML for output\n"
+			"  --html-full     Use default header/footer in HTML output\n"
 			"  --no-buffering  Do not buffer output\n"
 			"  --timeout=xx    Timeout in seconds", MAX_STREAMS);
 
@@ -248,6 +305,12 @@ main(int argc, char **argv)
 		alarm(timeout);
 	}
 
+	if (out_type == OutType_Html && out_html_full)
+		fprintf(stdout, "<html>\n"
+			"<style>\n"
+			".error { color: red}\n"
+			"</style>\n<body>\n<pre>");
+
 	/* wait data from our child */
 	for (;!got_alarm;) {
 		fd_set fds_read;
@@ -277,6 +340,9 @@ main(int argc, char **argv)
 
 	/* wait child exit */
 	while ((pid = wait(&ret)) <= 0 && errno == EINTR);
+
+	if (out_type == OutType_Html && out_html_full)
+		fprintf(stdout, "</pre>\n</body>\n</html>\n");
 
 	/* return corrent result */
 	if (WIFEXITED(ret))
