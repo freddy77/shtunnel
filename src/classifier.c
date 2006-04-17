@@ -138,6 +138,9 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 				case '"':
 					fprintf(stdout, "&quot;");
 					break;
+				case '&':
+					fprintf(stdout, "&amp;");
+					break;
 				default:
 					putc(*p, stdout);
 					break;
