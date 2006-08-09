@@ -72,6 +72,7 @@ static int client = 1;
 static const char *shellCmd = NULL;
 static int initialized = 0;
 static int debugEnabled = 0;
+static const char * logFile = "log.txt";
 static char endPoint[32] = ""; /* "client" or "server" */
 
 static int WRITE = -1;
@@ -143,7 +144,7 @@ void debug(const char *msg, ...)
 		return;
 
 	if (!log) {
-		log = fopen("log.txt", "a");
+		log = fopen(logFile, "a");
 		if (!log)
 			fatal ("Error opening log file");
 	}
@@ -1028,20 +1029,23 @@ static int parse_arguments(int argc, char **argv)
 				*end_no_options++ = argv[i];
 			break;
 		} else if (strcmp(arg, "L") == 0) {
-			if (++i >= argc) fatal("argument expected");
+			if (++i >= argc) fatal("argument expected for -L");
 			addLocal(argv[i]);
 			channel_options = 1;
 		} else if (strcmp(arg, "R") == 0) {
-			if (++i >= argc) fatal("argument expected");
+			if (++i >= argc) fatal("argument expected for -R");
 			addRemote(argv[i]);
 			channel_options = 1;
 		} else if (strcmp(arg, "-server") == 0) {
 			client = 0;
 		} else if (strcmp(arg, "-shell") == 0) {
-			if (++i >= argc) fatal("argument expected");
+			if (++i >= argc) fatal("argument expected for --shell");
 			shellCmd = argv[i];
 		} else if (strcmp(arg, "-debug") == 0) {
 			debugEnabled = 1;
+		} else if (strcmp(arg, "-log-file") == 0) {
+			if (++i >= argc) fatal("argument expected for --log-file");
+			logFile = argv[i];
 		} else if (strcmp(arg, "-help") == 0) {
 			fprintf(stderr, "Usage: shtunnel [OPTION] .. [server] [ARG] ..\n"
 				"Options:\n"
@@ -1050,6 +1054,7 @@ static int parse_arguments(int argc, char **argv)
 				" -L <port>::<port>         redirect (see ssh(1))\n"
 				" -R <port>:[<ip>]:<port>   redirect (see ssh(1))\n"
 				" --debug                   write debug info to log.txt\n"
+				" --log-file <name>         file name to log to\n"
 				" --help                    this help\n"
 				" --version                 print version information\n"
 				" --                        stop option parsing\n");

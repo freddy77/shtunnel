@@ -109,8 +109,8 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 		if (*cur_pipe != pipe->num) {
 			switch (out_type) {
 			case OutType_Color:
-				if (pipe->num == 2)
-					fprintf(stdout, "\x1b[00;31m");
+				if (pipe->num >= 2)
+					fprintf(stdout, "\x1b[00;3%dm", ((pipe->num - 2) % 7) + 1);
 				break;
 			case OutType_Normal:
 				fprintf(stdout, "%d:", pipe->num);
@@ -154,7 +154,7 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 		/* end line */
 		switch (out_type) {
 		case OutType_Color:
-			if (pipe->num == 2)
+			if (pipe->num >= 2)
 				fprintf(stdout, "\x1b[00m");
 		case OutType_Normal:
 			break;

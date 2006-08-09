@@ -2,7 +2,7 @@
 . no-blocking connect
 . ip specification for -L
 . man page
-. more options (log file name, magic char, blocking data limits)
+. more options (magic char, blocking data limits)
 . more than 255 channels ??
 . ip v6 ??
 . port to win ?? Use cygwin
