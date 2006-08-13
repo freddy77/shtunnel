@@ -1,3 +1,6 @@
+Version 0.1.7 - 2006-xx-xx
+	* fix < /dev/null redirection
+
 Version 0.1.6 - 2006-08-13
 	* small fix for HTML output
 	* add --log-file option

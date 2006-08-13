@@ -18,4 +18,5 @@ tests:
   it wait for enter to get line and send to server pipe (it do not create
   a pty for server cause it do not use pty to execute commands)
   A workaround it to use -t option to ssh (--shell 'ssh -t')
-
+. shtunnel --debug --shell ls xxx < /dev/null
+  should work and not stall

@@ -78,7 +78,7 @@ static char endPoint[32] = ""; /* "client" or "server" */
 static int WRITE = -1;
 static int READ = -1;
 static const int STDOUT = 1;
-static const int STDIN  = 0;
+static int STDIN  = 0;
 
 #define MAX_CONTROL_LEN 260
 #define MAX_DATA_LEN 1000
@@ -951,6 +951,7 @@ static void signal_child(int sig)
 		if (pid <= 0)
 			continue;
 		if (WIFEXITED(status) || WIFSIGNALED(status)) {
+			debug("child exited");
 			child_exited = 1;
 			child_status = status;
 			break;
@@ -977,8 +978,12 @@ static void check_window_change(void)
 		return;
 	window_changed = 0;
 
-	if (ioctl(fileno(stdin), TIOCGWINSZ, &ws) < 0)
-		return;
+	if (ioctl(fileno(stdin), TIOCGWINSZ, &ws) < 0) {
+		ws.ws_row = 25;
+		ws.ws_col = 80;
+		ws.ws_xpixel = 80 * 8;
+		ws.ws_ypixel = 25 * 8;
+	}
 	ioctl(WRITE, TIOCSWINSZ, &ws);
 
 	if (!initialized)
@@ -1239,7 +1244,8 @@ int main(int argc, char **argv)
 		int max_fd = 0;
 
 		FD_ZERO(&fds_read);
-		FD_SET(STDIN, &fds_read);
+		if (STDIN >= 0)
+			FD_SET(STDIN, &fds_read);
 		if (READ >= 0)
 			FD_SET(READ, &fds_read);
 
@@ -1270,12 +1276,19 @@ int main(int argc, char **argv)
 		if (FD_ISSET(WRITE, &fds_error))
 			fatal("WRITE");
 
-		if (FD_ISSET(STDIN, &fds_read)) {
+		if (STDIN >= 0 && FD_ISSET(STDIN, &fds_read)) {
 			uchar data[MAX_DATA_LEN];
 			ssize_t res = read(STDIN, data, MAX_DATA_LEN);
 			if (res <= 0) {
 				/* this can be caused by redirection of standard input on client */
-				fatal("broken pipe input %s", endPoint);
+				if (client) {
+					/* TODO perhaps we should close server side too */
+					close(STDIN);
+					STDIN = -1;
+					continue;
+				} else {
+					fatal("broken pipe input %s", endPoint);
+				}
 			}
 			debug_dump(client ? "data from input" : "data from client", data, res);
 			if (client) {
@@ -1295,6 +1308,8 @@ int main(int argc, char **argv)
 				debug("broken pipe %s", endPoint);
 
 				/* this can be caused by program termination */
+				if (client)
+					must_quit = 1;
 				close(READ);
 				READ = -1;
 				continue;
