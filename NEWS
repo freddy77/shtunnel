@@ -1,10 +1,11 @@
-Version 0.1.7 - 2006-xx-xx
+Version 0.1.7 - 2007-01-01
 	* fix < /dev/null redirection
+	* add --byte-limit option to classifier to stop if data is too long
 
 Version 0.1.6 - 2006-08-13
 	* small fix for HTML output
 	* add --log-file option
-	* suppot colors for more than 2 streams
+	* support colors for more than 2 streams
 
 Version 0.1.5 - 2006-04-15
 	* support for HTML output in classifier

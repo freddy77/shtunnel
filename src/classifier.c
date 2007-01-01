@@ -214,6 +214,8 @@ main(int argc, char **argv)
 	int nice_res;
 	int timeout = -1;
 	pid_t pid;
+	unsigned int byte_count = 0;
+	unsigned int byte_limit = 0;
 
 	ret = 0;
 	while (argc >= 2 && !ret) {
@@ -225,6 +227,11 @@ main(int argc, char **argv)
 			timeout = atoi(argv[1] + 10);
 			if (timeout <= 0)
 				ret = 1;
+		} else if (strncmp(argv[1], "--byte-limit=", 13) == 0) {
+			int i = atoi(argv[1] + 13);
+			if (i <= 0)
+				ret = 1;
+			byte_limit = i;
 		} else if (strcmp(argv[1], "--color") == 0) {
 			out_type = OutType_Color;
 		} else if (strcmp(argv[1], "--html") == 0) {
@@ -253,7 +260,8 @@ main(int argc, char **argv)
 			"  --html          Use HTML for output\n"
 			"  --html-full     Use default header/footer in HTML output\n"
 			"  --no-buffering  Do not buffer output\n"
-			"  --timeout=xx    Timeout in seconds", MAX_STREAMS);
+			"  --timeout=xx    Timeout in seconds\n"
+			"  --byte-limit=xx Limit data to xx bytes", MAX_STREAMS);
 
 	for (i = 0; i < num_pipe; ++i) {
 		if (my_pipe(&pipes[i], i + 1))
@@ -336,9 +344,15 @@ main(int argc, char **argv)
 			continue;
 		}
 
-		for (i = 0; i < num_pipe; ++i)
-			if (handle_data(&fds_read, &pipes[i], &cur_pipe) > 0)
+		for (i = 0; i < num_pipe; ++i) {
+			int res = handle_data(&fds_read, &pipes[i], &cur_pipe);
+			if (res > 0) {
+				byte_count += res;
+				if (byte_limit && byte_count > byte_limit)
+					kill(child_pid, SIGKILL);
 				continue;
+			}
+		}
 	}
 
 	/* wait child exit */
