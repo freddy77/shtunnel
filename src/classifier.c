@@ -81,8 +81,11 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 		return res;
 	}
 
-	if (*cur_pipe != pipe->num && *cur_pipe != -1 && out_type == OutType_Normal) {
-		fprintf(stdout, "\n+");
+	if (*cur_pipe != pipe->num && *cur_pipe != -1) {
+		if (out_type == OutType_Normal)
+			fprintf(stdout, "\n+");
+		else if (out_type == OutType_Color && *cur_pipe >= 2)
+			fprintf(stdout, "\x1b[00m");
 		*cur_pipe = -1;
 	}
 
@@ -360,6 +363,9 @@ main(int argc, char **argv)
 
 	if (out_type == OutType_Html && out_html_full)
 		fprintf(stdout, "</pre>\n</body>\n</html>\n");
+
+	if (out_type == OutType_Color && cur_pipe >= 2)
+		fprintf(stdout, "\x1b[00m");
 
 	/* return corrent result */
 	if (WIFEXITED(ret))

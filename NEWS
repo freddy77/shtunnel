@@ -1,3 +1,7 @@
+Version 0.1.8 - 2007-xx-xx
+	* reset color changing stream
+	* reset color on exit
+
 Version 0.1.7 - 2007-01-01
 	* fix < /dev/null redirection
 	* add --byte-limit option to classifier to stop if data is too long
