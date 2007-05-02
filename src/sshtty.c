@@ -41,30 +41,41 @@ RCSID("$OpenBSD: sshtty.c,v 1.6 2004/05/08 00:01:37 deraadt Exp $");
 
 static struct termios _saved_tio;
 static int _in_raw_mode = 0;
+static int raw_fd = -1;
 
+#if 0
 struct termios
 get_saved_tio(void)
 {
 	return _saved_tio;
 }
+#endif
 
 void
 leave_raw_mode(void)
 {
-	if (!_in_raw_mode)
+	if (!_in_raw_mode || raw_fd < 0)
 		return;
 	signal(SIGTTOU, SIG_IGN);
-	if (tcsetattr(fileno(stdin), TCSADRAIN, &_saved_tio) == -1)
+	if (tcsetattr(raw_fd, TCSADRAIN, &_saved_tio) == -1)
 		perror("tcsetattr");
 	else
 		_in_raw_mode = 0;
 	signal(SIGTTOU, SIG_DFL);
+	close(raw_fd);
+	raw_fd = -1;
 }
 
 void
 enter_raw_mode(void)
 {
-	set_raw_mode(fileno(stdin));
+	if (raw_fd >= 0)
+		close(raw_fd);
+	raw_fd = open(_PATH_TTY, O_RDWR | O_NOCTTY);
+	if (raw_fd < 0)
+		return;
+
+	set_raw_mode(raw_fd);
 }
 
 void
@@ -73,7 +84,8 @@ set_raw_mode(int fd)
 	struct termios tio;
 
 	if (tcgetattr(fd, &tio) == -1) {
-		perror("tcgetattr");
+		if (isatty(fd))
+			perror("tcgetattr");
 		return;
 	}
 	_saved_tio = tio;

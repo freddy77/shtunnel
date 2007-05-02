@@ -76,9 +76,8 @@ static const char * logFile = "log.txt";
 static char endPoint[32] = ""; /* "client" or "server" */
 
 static int WRITE = -1;
-static int READ = -1;
 static const int STDOUT = 1;
-static int STDIN  = 0;
+static const int STDERR = 2;
 
 #define MAX_CONTROL_LEN 260
 #define MAX_DATA_LEN 1000
@@ -1124,8 +1123,11 @@ static size_t quote_arguments(char *dest, char **args, int num_arg)
 int main(int argc, char **argv)
 {
 	char *p;
-	int ptyfd, ttyfd;
+	int ptyfd = -1, ttyfd = -1, i;
 	char ttyname[128];
+	int READ = -1, READ2 = -1;
+	int STDIN  = 0;
+	int pipes[6], num_pipe = 0;
 
 	argc = parse_arguments(argc, argv);
 
@@ -1153,12 +1155,18 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* TODO do not allocate a pty if from a pipe */
-	/*
-	 * TODO handle redirection, we must prodive a replace for stdin and stdout
-	 * check minimiun available pty
-	 */
-	if (!pty_allocate(&ptyfd, &ttyfd, ttyname, sizeof(ttyname)))
+	/* handle redirections creating pipe where no tty */
+	for (i = 0; i < 6; ++i)
+		pipes[i] = -1;
+	for (i = 0; i < 3; ++i) {
+		if (isatty(i))
+			continue;
+		if (pipe(pipes+i*2))
+			fatal("pipe");
+		++num_pipe;
+	}
+	/* allocate a pty if we want at least one tty */
+	if (num_pipe < 3 && !pty_allocate(&ptyfd, &ttyfd, ttyname, sizeof(ttyname)))
 		fatal("creating pty");
 
 	/* TODO only if TTY, not for pipe... pass parameter for file to allow input redirection */
@@ -1173,6 +1181,9 @@ int main(int argc, char **argv)
 		mywrite(STDOUT, buf, MAGIC_PREFIX_LEN + strlen(magicInit));
 	}
 
+	signal(SIGPIPE, SIG_IGN);
+	signal(SIGCHLD, signal_child);
+
 	/* TODO on exit close child and reset terminal */
 	switch(fork()) {
 	case 0:
@@ -1183,17 +1194,27 @@ int main(int argc, char **argv)
 		FOREACH_CHANNEL_END
 
 		/* from openssh session.c */
-		close(ptyfd);
-		pty_make_controlling_tty(&ttyfd, ttyname);
+		if (ttyfd >= 0) {
+			close(ptyfd);
+			pty_make_controlling_tty(&ttyfd, ttyname);
+		}
 
 		/* replace files */
-		if (dup2(ttyfd, 0) < 0)
-			error("dup2 stdin: %s", strerror(errno));
-		if (dup2(ttyfd, 1) < 0)
-			error("dup2 stdout: %s", strerror(errno));
-		if (dup2(ttyfd, 2) < 0)
-			error("dup2 stderr: %s", strerror(errno));
-		close(ttyfd);
+		for (i = 0; i < 3; ++i) {
+			static const char names[3][4] = { "in", "out", "err" };
+			int fd;
+
+			if (isatty(i)) {
+				fd = ttyfd;
+			} else {
+				fd = pipes[i*2+(i==0?0:1)];
+				close(pipes[i*2+(i==0?1:0)]);
+			}
+			if (dup2(fd, i) < 0)
+				error("dup2 std%s: %s", names[i], strerror(errno));
+		}
+		if (ttyfd >= 0)
+			close(ttyfd);
 
 		leave_raw_mode();
 
@@ -1218,17 +1239,39 @@ int main(int argc, char **argv)
 	case -1:
 		fatal("fork error");
 	}
-	close(ttyfd);
-	READ = dup(ptyfd);
-	if (READ < 0)
-		fatal("duplicating pty");
-	WRITE = ptyfd;
+	if (ttyfd >= 0)
+		close(ttyfd);
 
-	signal(SIGPIPE, SIG_IGN);
+	if (isatty(0)) {
+		WRITE = ptyfd;
+	} else {
+		WRITE = pipes[1];
+		close(pipes[0]);
+	}
+
+	if (isatty(1)) {
+		READ = dup(ptyfd);
+		if (READ < 0)
+			fatal("duplicating pty");
+	} else {
+		READ = pipes[2];
+		close(pipes[3]);
+	}
+
+	if (isatty(2)) {
+		if (!isatty(1)) {
+			READ2 = dup(ptyfd);
+			if (READ2 < 0)
+				fatal("duplicating pty");
+		}
+	} else {
+		READ2 = pipes[4];
+		close(pipes[5]);
+	}
+
 	signal(SIGINT, signal_stop);
 	signal(SIGQUIT, signal_stop);
 	signal(SIGTERM, signal_stop);
-	signal(SIGCHLD, signal_child);
 
 	if (client) {
 		/* TODO only for TTY */
@@ -1248,16 +1291,21 @@ int main(int argc, char **argv)
 			FD_SET(STDIN, &fds_read);
 		if (READ >= 0)
 			FD_SET(READ, &fds_read);
+		if (READ2 >= 0)
+			FD_SET(READ2, &fds_read);
 
 		FD_ZERO(&fds_write);
 
 		FD_ZERO(&fds_error);
 		if (READ >= 0)
 			FD_SET(READ, &fds_error);
+		if (READ2 >= 0)
+			FD_SET(READ2, &fds_error);
 		FD_SET(WRITE, &fds_error);
 
 		if (STDIN > max_fd) max_fd = STDIN;
 		if (READ > max_fd) max_fd = READ;
+		if (READ2 > max_fd) max_fd = READ2;
 		if (WRITE > max_fd) max_fd = WRITE;
 
 		if (must_quit || (child_exited && READ < 0))
@@ -1321,6 +1369,17 @@ int main(int argc, char **argv)
 			} else {
 				write_data(STDOUT, data, res);
 			}
+		}
+		if (READ2 >= 0 && FD_ISSET(READ2, &fds_read)) {
+			uchar data[MAX_DATA_LEN];
+			ssize_t res = read(READ2, data, MAX_DATA_LEN);
+			if (res <= 0) {
+				close(READ2);
+				READ2 = -1;
+				continue;
+			}
+			debug_dump(client ? "data from server" : "data from program", data, res);
+			mywrite(STDERR, data, res);
 		}
 	}
 

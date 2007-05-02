@@ -1,4 +1,3 @@
-. support for redirection of stream (in, out, err)
 . no-blocking connect
 . ip specification for -L
 . man page

@@ -1,5 +1,7 @@
 Version 0.1.9 - 2007-xx-xx
 	* added automatic test
+	* support redirection
+	* use controlling tty instead of stdin (which can be redirected)
 
 Version 0.1.8 - 2007-04-22
 	* reset color changing stream

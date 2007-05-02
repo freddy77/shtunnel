@@ -17,7 +17,9 @@
 #ifndef SSHPTY_H
 #define SSHPTY_H
 
+#if 0
 struct termios get_saved_tio(void);
+#endif
 void	 leave_raw_mode(void);
 void	 enter_raw_mode(void);
 void     set_raw_mode(int fd);
