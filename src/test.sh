@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# $Id: test.sh,v 1.2 2007-05-02 14:09:44 freddy Exp $
+# $Id: test.sh,v 1.3 2007-05-25 12:44:05 freddy Exp $
 
 # shtunnel --debug --shell ls xxx < /dev/null
 #  should work and not stall
@@ -21,7 +21,7 @@ if test "$OUT" != "$EXP"; then
 	exit 1
 fi
 
-# test reser color at end of line
+# test reset color at end of line
 OUT=`./classifier --color sh -c 'echo -n ciao >&2' | cat -ve`
 rm log.txt
 EXP='^[[00;31mciao^[[00m'
