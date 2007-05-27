@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 
-# $Id: test.sh,v 1.3 2007-05-25 12:44:05 freddy Exp $
+# $Id: test.sh,v 1.4 2007-05-27 07:54:50 freddy Exp $
 
 # shtunnel --debug --shell ls xxx < /dev/null
 #  should work and not stall
