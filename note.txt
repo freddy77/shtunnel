@@ -4,7 +4,7 @@ Users need to have a shell account with perl access so it
 doesn't break security, it just use available resources.
 
 Mainly the tunnel client program launch a ssh/shell program to
-connect. On the other end another prgram is launched to handle
+connect. On the other end another program is launched to handle
 other end connection. This end launch another shell and 
 transparently handle connection and data transfer.
 
@@ -80,8 +80,8 @@ Tunnel client behaviour
  - if data send data
  - if connect request (from other end) connect to new socket
 
-Client wants aconnection from server
-====================================
+Client wants a connection from server
+=====================================
 
 Command: shtunnel -R 1234::5678 user@server
 1234 remote port
@@ -131,7 +131,7 @@ init         allocate
              "listen"
              channel
 ------------------------------------------------------------
-connection accept connectio
+connection accept connection
 to client  new "connected"
 port 5678  channel
            not connected
@@ -146,7 +146,7 @@ port 5678  channel
                            ACCEPT(2,0)     close socket
            close channel   <----------
 --------------------------------------------------------------
-Closing have same bahaviur
+Closing have same behaviour
 
 Channel types
 =============
