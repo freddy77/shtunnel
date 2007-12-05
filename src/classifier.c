@@ -319,11 +319,25 @@ main(int argc, char **argv)
 		alarm(timeout);
 	}
 
-	if (out_type == OutType_Html && out_html_full)
+	if (out_type == OutType_Html && out_html_full) {
+		int i;
+		const char colors[7][8] = {
+			"red",
+			"green",
+			"yellow",
+			"blue",
+			"cyan",
+			"magenta",
+			"gray"
+		};
+
 		fprintf(stdout, "<html>\n"
 			"<style>\n"
-			".error { color: red}\n"
-			"</style>\n<body>\n<pre>");
+			".error { color: red }\n");
+		for (i = 1; i < 7 && (i + 2) <= num_pipe; ++i)
+			fprintf(stdout, ".stream%d { color: %s }\n", i+2, colors[i]);
+		fprintf(stdout, "</style>\n<body>\n<pre>");
+	}
 
 	/* wait data from our child */
 	for (;!got_alarm;) {
