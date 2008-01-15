@@ -17,12 +17,8 @@
 #ifndef SSHPTY_H
 #define SSHPTY_H
 
-#if 0
-struct termios get_saved_tio(void);
-#endif
-void	 leave_raw_mode(void);
-void	 enter_raw_mode(void);
-void     set_raw_mode(int fd);
+int	 set_raw_mode(int fd, struct termios *saved_tio);
+int	 set_saved_mode(int fd, struct termios *saved_tio);
 
 int	 pty_allocate(int *, int *, char *, int);
 void	 pty_release(const char *);

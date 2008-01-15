@@ -18,3 +18,5 @@ tests:
   a pty for server cause it do not use pty to execute commands)
   A workaround it to use -t option to ssh (--shell 'ssh -t')
 . strace -s 200 -f -o xxx.log ./shtunnel --shell "./shtunnel --server --shell cat" "./shtunnel.c" | md5sum
+. "shtunnel --shell ssh localhost " not duplicate new lines and reset correctly line
+

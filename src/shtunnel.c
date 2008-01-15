@@ -99,6 +99,9 @@ static void sendCommand(int fd, CommandType type, int channel, int port);
 static void check_window_change(void);
 static void write_channel_data(channel *ch, uchar *data, unsigned int len);
 
+static struct termios saved_tio;
+static int main_ttyfd = -1;
+
 /*
  * Logging functions
  */
@@ -109,7 +112,7 @@ void fatal(const char *msg, ...)
 
 	if (!client)
 		sendCommand(STDOUT, CmdShutdown, 0, 0);
-	leave_raw_mode();
+	set_saved_mode(main_ttyfd, &saved_tio);
 
 	fprintf(stderr, "fatal error: ");
 
@@ -134,24 +137,25 @@ void error(const char *msg, ...)
 	fprintf(stderr, "\n");
 }
 
+static FILE *fdLog = NULL;
+
 void debug(const char *msg, ...)
 {
 	va_list ap;
-	static FILE *log = NULL;
 
 	if (!debugEnabled)
 		return;
 
-	if (!log) {
-		log = fopen(logFile, "a");
-		if (!log)
+	if (!fdLog) {
+		fdLog = fopen(logFile, "a");
+		if (!fdLog)
 			fatal ("Error opening log file");
 	}
 	va_start(ap, msg);
-	vfprintf(log,  msg, ap);
+	vfprintf(fdLog,  msg, ap);
 	va_end(ap);
-	fprintf(log, "\n");
-	fflush(log);
+	fprintf(fdLog, "\n");
+	fflush(fdLog);
 }
 
 static void debug_dump(const char *msg, const void *buf, int length)
@@ -1159,8 +1163,10 @@ int main(int argc, char **argv)
 	for (i = 0; i < 6; ++i)
 		pipes[i] = -1;
 	for (i = 0; i < 3; ++i) {
-		if (isatty(i))
+		if (isatty(i)) {
+			main_ttyfd = i;
 			continue;
+		}
 		if (pipe(pipes+i*2))
 			fatal("pipe");
 		++num_pipe;
@@ -1169,8 +1175,7 @@ int main(int argc, char **argv)
 	if (num_pipe < 3 && !pty_allocate(&ptyfd, &ttyfd, ttyname, sizeof(ttyname)))
 		fatal("creating pty");
 
-	/* TODO only if TTY, not for pipe... pass parameter for file to allow input redirection */
-	enter_raw_mode();
+	set_raw_mode(main_ttyfd, &saved_tio);
 
 	/* init request must be send after switching to raw to avoid echo */
 	if (!client) {
@@ -1193,13 +1198,20 @@ int main(int argc, char **argv)
 				close(ch->fd);
 		FOREACH_CHANNEL_END
 
+		if (fdLog) {
+			fclose(fdLog);
+			fdLog = NULL;
+		}
+
 		/* from openssh session.c */
 		if (ttyfd >= 0) {
 			close(ptyfd);
 			pty_make_controlling_tty(&ttyfd, ttyname);
+			set_saved_mode(ttyfd, &saved_tio);
 		}
 
 		/* replace files */
+		main_ttyfd = -1;
 		for (i = 0; i < 3; ++i) {
 			static const char names[3][4] = { "in", "out", "err" };
 			int fd;
@@ -1212,22 +1224,23 @@ int main(int argc, char **argv)
 			}
 			if (dup2(fd, i) < 0)
 				error("dup2 std%s: %s", names[i], strerror(errno));
+			if (fd == ttyfd)
+				main_ttyfd = i;
 		}
 		if (ttyfd >= 0)
 			close(ttyfd);
 
-		leave_raw_mode();
-
 		/* wait initialization */
-		enter_raw_mode();
 		if (!client) {
 			char c;
 			ssize_t len;
+
+			set_raw_mode(main_ttyfd, NULL);
 			while ((len = read(0, &c, 1)) < 0 && errno == EINTR);
 			if (len <= 0)
 				return 1;
+			set_saved_mode(main_ttyfd, &saved_tio);
 		}
-		leave_raw_mode();
 
 		/* TODO parse parameters instead of using an extra shell */
 		p = malloc(strlen(shellCmd) + quote_arguments(NULL, argv + 1, argc - 1) + 10);
@@ -1385,7 +1398,7 @@ int main(int argc, char **argv)
 
 	if (!client)
 		sendCommand(STDOUT, CmdShutdown, 0, 0);
-	leave_raw_mode();
+	set_saved_mode(main_ttyfd, &saved_tio);
 
 	/* pass code from child process */
 	if (signal_exit == SIGCHLD) {

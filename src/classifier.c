@@ -203,7 +203,7 @@ my_pipe(pipe_t *p, int num)
 
 	if (num <= 2) {
 		res = !pty_allocate(&fd[0], &fd[1], ttyname, sizeof(ttyname));
-		if (!res) set_raw_mode(fd[1]);
+		if (!res) set_raw_mode(fd[1], NULL);
 	} else {
 		res = pipe(fd);
 	}

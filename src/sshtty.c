@@ -39,56 +39,19 @@ RCSID("$OpenBSD: sshtty.c,v 1.6 2004/05/08 00:01:37 deraadt Exp $");
 
 #include "sshpty.h"
 
-static struct termios _saved_tio;
-static int _in_raw_mode = 0;
-static int raw_fd = -1;
-
-#if 0
-struct termios
-get_saved_tio(void)
-{
-	return _saved_tio;
-}
-#endif
-
-void
-leave_raw_mode(void)
-{
-	if (!_in_raw_mode || raw_fd < 0)
-		return;
-	signal(SIGTTOU, SIG_IGN);
-	if (tcsetattr(raw_fd, TCSADRAIN, &_saved_tio) == -1)
-		perror("tcsetattr");
-	else
-		_in_raw_mode = 0;
-	signal(SIGTTOU, SIG_DFL);
-	close(raw_fd);
-	raw_fd = -1;
-}
-
-void
-enter_raw_mode(void)
-{
-	if (raw_fd >= 0)
-		close(raw_fd);
-	raw_fd = open(_PATH_TTY, O_RDWR | O_NOCTTY);
-	if (raw_fd < 0)
-		return;
-
-	set_raw_mode(raw_fd);
-}
-
-void
-set_raw_mode(int fd)
+int
+set_raw_mode(int fd, struct termios *saved_tio)
 {
 	struct termios tio;
+	int res = 0;
 
 	if (tcgetattr(fd, &tio) == -1) {
 		if (isatty(fd))
 			perror("tcgetattr");
-		return;
+		return res;
 	}
-	_saved_tio = tio;
+	if (saved_tio)
+		*saved_tio = tio;
 	tio.c_iflag |= IGNPAR;
 	tio.c_iflag &= ~(ISTRIP | INLCR | IGNCR | ICRNL | IXON | IXANY | IXOFF);
 #ifdef IUCLC
@@ -105,6 +68,20 @@ set_raw_mode(int fd)
 	if (tcsetattr(fd, TCSADRAIN, &tio) == -1)
 		perror("tcsetattr");
 	else
-		_in_raw_mode = 1;
+		res = 1;
 	signal(SIGTTOU, SIG_DFL);
+	return res;
 }
+
+int
+set_saved_mode(int fd, struct termios *saved_tio)
+{
+	int res = 1;
+
+	signal(SIGTTOU, SIG_IGN);
+	if (tcsetattr(fd, TCSADRAIN, saved_tio) == -1)
+		res = 0;
+	signal(SIGTTOU, SIG_DFL);
+	return res;
+}
+

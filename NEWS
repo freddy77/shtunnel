@@ -1,4 +1,6 @@
 Version 0.1.11 - 2008-xx-xx
+	* don't pass log file to child process
+	* fix mode setting on tty
 	* fix html output with span not closed
 
 Version 0.1.10 - 2007-12-28
