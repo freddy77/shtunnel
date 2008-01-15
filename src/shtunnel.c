@@ -1,5 +1,5 @@
 /* shtunnel - program to tunnel tcp stream in a shell session
- * Copyright (C) 2004  Frediano Ziglio
+ * Copyright (C) 2004-2008  Frediano Ziglio
  * -----
  *
  * This program is free software; you can redistribute it and/or modify
