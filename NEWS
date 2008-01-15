@@ -1,4 +1,4 @@
-Version 0.1.11 - 2008-xx-xx
+Version 0.1.11 - 2008-01-16
 	* don't pass log file to child process
 	* fix mode setting on tty
 	* fix html output with span not closed
