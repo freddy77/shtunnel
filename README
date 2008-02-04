@@ -1,7 +1,7 @@
 This program was written to provide -L and -R like options in ssh(1) for
 normal shell.
 
-It use a client program and a server program (just same program with different
+It uses a client program and a server program (just same program with different
 options) to provide this feature.
 
 Client program (launched from your machine) launch a ssh to your server (you
