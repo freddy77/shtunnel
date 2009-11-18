@@ -1,7 +1,7 @@
 dnl Process this file with autoconf to produce a configure script.
 
 dnl ------------------------------------------------------------
-dnl $Id: configure.in,v 1.15 2008-01-15 23:16:27 freddy Exp $
+dnl $Id: configure.in,v 1.16 2009-11-18 09:50:01 cvswrite Exp $
 dnl If you're trying to create a new configure test, try
 dnl
 dnl 	http://autogen.sourceforge.net/conftest.html
@@ -12,9 +12,9 @@ dnl ------------------------------------------------------------
 # ------------------------------------------------------------
 AC_INIT(src/shtunnel.c)
 AC_PREREQ(2.53)
-AC_REVISION($Revision: 1.15 $)
+AC_REVISION($Revision: 1.16 $)
 
-AM_INIT_AUTOMAKE(shtunnel, 0.1.11)
+AM_INIT_AUTOMAKE(shtunnel, 0.1.12)
 AM_CONFIG_HEADER(src/config.h)
 
 # ------------------------------------------------------------

@@ -333,6 +333,9 @@ main(int argc, char **argv)
 	/* ignore closing pipe */
 	signal(SIGPIPE, SIG_IGN);
 
+	/* let child process handle Ctrl-C */
+	signal(SIGINT, SIG_IGN);
+
 	/* set alarm for timeout */
 	if (timeout > 0) {
 		signal(SIGALRM, kill_child);

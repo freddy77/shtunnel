@@ -6,7 +6,6 @@
 . ip v6 ??
 . port to win ?? Use cygwin
 . ftp emulation ??
-. ctrl-c on classifier should not stop classifier
 
 tests:
 . long output should not be truncated for buffer problem, consider
