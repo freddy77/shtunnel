@@ -19,6 +19,7 @@
 #include "includes.h"
 #include <assert.h>
 #include "sshpty.h"
+#include "cuse.h"
 
 static volatile int got_alarm = 0;
 static pid_t child_pid = 0;
@@ -82,70 +83,60 @@ typedef struct {
 	int num;
 } pipe_t;
 
-static int
-handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
+static int cur_pipe = -1;
+
+void
+handle_buf(const char *buf, size_t len, int pipe_num)
 {
-	char data[1024], *p, *pend;
-	ssize_t res;
+	const char *p, *pend;
 
-	if (pipe->read < 0 || !FD_ISSET(pipe->read, fds_read))
-		return 0;
-	res = read(pipe->read, data, sizeof(data));
-
-	/* broken pipe assume child exited */
-	if (res <= 0) {
-		close(pipe->read);
-		pipe->read = -1;
-		return res;
-	}
-
-	if (*cur_pipe != pipe->num && *cur_pipe != -1) {
+	if (cur_pipe != pipe_num && cur_pipe != -1) {
 		if (out_type == OutType_Normal)
 			fprintf(stdout, "\n+");
-		else if (out_type == OutType_Color && *cur_pipe >= 2)
+		else if (out_type == OutType_Color && cur_pipe >= 2)
 			fprintf(stdout, "\x1b[00m");
-		else if (out_type == OutType_Html && *cur_pipe >= 2)
+		else if (out_type == OutType_Html && cur_pipe >= 2)
 			fprintf(stdout, "</span>");
-		*cur_pipe = -1;
+		cur_pipe = -1;
 	}
 
 	/* write all lines prefixed by handle */
-	p = data;
-	pend = p + res;
-	for (;p != pend;) {
-		/*
-		 * in a string like
- 		 * "pippo" "\n" "pluto...
-		 * p       nl   next
-		 */
-		char *next;
-		char *nl = (char *) memchr(p, '\n', pend - p);
-		if (!nl) {
-			next = nl = pend;
-		} else {
-			next = nl + 1;
-			if (nl > p && nl[-1] == '\r')
-				--nl;
-		}
+	p = buf;
+		pend = p + len;
+		for (;p != pend;) {
+			/*
+			 * in a string like
+			 * "pippo" "\n" "pluto...
+			 * p       nl   next
+			 */
+			const char *next;
+			const char *nl = (char *) memchr(p, '\n', pend - p);
+			if (!nl) {
+				next = nl = pend;
+			} else {
+				next = nl + 1;
+				if (nl > p && nl[-1] == '\r')
+					--nl;
+			}
 
-		/* start line */
-		if (*cur_pipe != pipe->num) {
+			/* start line */
+			if (cur_pipe != pipe_num) {
 			switch (out_type) {
 			case OutType_Color:
-				if (pipe->num >= 2)
-					fprintf(stdout, "\x1b[00;3%dm", ((pipe->num - 2) % 7) + 1);
+				if (pipe_num >= 2)
+					fprintf(stdout, "\x1b[00;3%dm", ((pipe_num - 2) % 7) + 1);
 				break;
 			case OutType_Normal:
-				fprintf(stdout, "%d:", pipe->num);
+				fprintf(stdout, "%d:", pipe_num);
 				break;
 			case OutType_Html:
-				if (pipe->num == 2)
+				if (pipe_num == 2)
 					fprintf(stdout, "<span class=\"error\">");
-				else if (pipe->num > 1)
-					fprintf(stdout, "<span class=\"stream%d\">", pipe->num);
+				else if (pipe_num > 1)
+					fprintf(stdout, "<span class=\"stream%d\">", pipe_num);
 				break;
 			}
-			*cur_pipe = pipe->num;
+			cur_pipe = pipe_num;
 		}
 
 		/* line */
@@ -177,20 +168,40 @@ handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
 		/* end line */
 		switch (out_type) {
 		case OutType_Color:
-			if (pipe->num >= 2)
+			if (pipe_num >= 2)
 				fprintf(stdout, "\x1b[00m");
 		case OutType_Normal:
 			break;
 		case OutType_Html:
-			if (pipe->num > 1)
+			if (pipe_num > 1)
 				fprintf(stdout, "</span>");
 			break;
 		}
 		fwrite(nl, 1, next - nl, stdout);
-		*cur_pipe = -1;
+		cur_pipe = -1;
 
 		p = next;
 	}
+}
+
+static int
+handle_data(fd_set *fds_read, pipe_t *pipe, int *cur_pipe)
+{
+	char data[1024];
+	ssize_t res;
+
+	if (pipe->read < 0 || !FD_ISSET(pipe->read, fds_read))
+		return 0;
+	res = read(pipe->read, data, sizeof(data));
+
+	/* broken pipe assume child exited */
+	if (res <= 0) {
+		close(pipe->read);
+		pipe->read = -1;
+		return res;
+	}
+
+	handle_buf(data, res, pipe->num);
 	return res;
 }
 
@@ -199,9 +210,12 @@ my_pipe(pipe_t *p, int num)
 {
 	int fd[2];
 	int res;
-	char ttyname[128];
 
-	if (num <= 2) {
+	if (cuse_allocate(num, &fd[1])) {
+		fd[0] = -1;
+		res = 0;
+	} else if (num <= 2) {
+		char ttyname[128];
 		res = !pty_allocate(&fd[0], &fd[1], ttyname, sizeof(ttyname));
 		if (!res) set_raw_mode(fd[1], NULL);
 	} else {
@@ -233,7 +247,6 @@ main(int argc, char **argv)
 	int i, num_pipe = 2;
 	int max_fd = 0;
 	int ret;
-	int cur_pipe = -1;
 	int nice_res;
 	int timeout = -1;
 	pid_t pid;
@@ -286,6 +299,7 @@ main(int argc, char **argv)
 			"  --timeout=xx    Timeout in seconds\n"
 			"  --byte-limit=xx Limit data to xx bytes", MAX_STREAMS);
 
+	cuse_init();
 	for (i = 0; i < num_pipe; ++i) {
 		if (my_pipe(&pipes[i], i + 1))
 			fatal("allocating pipes");
@@ -293,6 +307,13 @@ main(int argc, char **argv)
 
 	/* try to increase our priority */	
 	nice_res = nice(-2);
+
+#ifdef HAVE_GETRESUID
+	uid_t uid = getuid();
+	setresuid(uid, uid, uid);
+	gid_t gid = getgid();
+	setresgid(gid, gid, gid);
+#endif
 
 	/* execute sub process */
 	child_pid = fork();
@@ -307,6 +328,9 @@ main(int argc, char **argv)
 				fatal("dup2 pipe %d: %s", pipes[i].num, strerror(errno));
 			close(pipes[i].write);
 		}
+		/* close other eventual handles (like CUSE) */
+		for (i = 0; i < 4; ++i)
+			close(num_pipe + 1 + i);
 
 		--argc;
 		memmove(argv, argv + 1, sizeof(char*) * argc);
