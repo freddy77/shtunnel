@@ -1,5 +1,6 @@
-Version 0.1.12 - 2009-xx-xx
+Version 0.1.12 - 2012-02-27
 	* pass SIGINT to child in classifier
+	* use CUSE if possible in classifier
 
 Version 0.1.11 - 2008-01-16
 	* don't pass log file to child process
