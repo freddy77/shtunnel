@@ -356,6 +356,7 @@ main(int argc, char **argv)
 
 	/* ignore closing pipe */
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
 
 	/* let child process handle Ctrl-C */
 	signal(SIGINT, SIG_IGN);
