@@ -144,11 +144,9 @@ static void my_ioctl(fuse_req_t req, int signed_cmd, void *uarg,
 	case TCGETS: {
 		struct termios_krnl ios_krnl;
 		struct termios ios;
-		int rc;
 
 		PREP_UARG(NULL, &ios_krnl);
-		rc = ioctl(1, signed_cmd, &ios);
-		if (rc < 0) {
+		if (ioctl(1, signed_cmd, &ios) < 0) {
 			fuse_reply_err(req, errno);
 			return;
 		}
@@ -156,18 +154,61 @@ static void my_ioctl(fuse_req_t req, int signed_cmd, void *uarg,
 		IOCTL_RETURN(0, &ios_krnl);
 	}
 
+	case TCSETS:
+	case TCSETSF:
+	case TCSETSW: {
+		struct termios_krnl ios_krnl;
+		struct termios ios;
+
+		PREP_UARG(&ios_krnl, NULL);
+		memset(&ios, 0, sizeof(ios));
+		memcpy(&ios, &ios_krnl, sizeof(ios_krnl));
+		if (ioctl(1, signed_cmd, &ios) < 0) {
+			fuse_reply_err(req, errno);
+			return;
+		}
+		IOCTL_RETURN(0, NULL);
+	}
+
 	case TIOCGWINSZ: {
 		struct winsize ws;
-		int rc;
 
 		PREP_UARG(&ws, &ws);
-		rc = ioctl(1, signed_cmd, &ws);
-		if (rc < 0) {
+		if (ioctl(1, signed_cmd, &ws) < 0) {
 			fuse_reply_err(req, errno);
 			return;
 		}
 		IOCTL_RETURN(0, &ws);
 	}
+
+	case TIOCGPGRP: {
+		pid_t pid;
+
+		PREP_UARG(NULL, &pid);
+		if (ioctl(1, signed_cmd, &pid) < 0) {
+			fuse_reply_err(req, errno);
+			return;
+		}
+		IOCTL_RETURN(0, &pid);
+	}
+
+	case TIOCSPGRP: {
+		pid_t pid;
+
+		PREP_UARG(&pid, NULL);
+		if (ioctl(1, signed_cmd, &pid) < 0) {
+			fuse_reply_err(req, errno);
+			return;
+		}
+		IOCTL_RETURN(0, NULL);
+	}
+
+	case TCXONC:
+		if (ioctl(1, signed_cmd, (int) uarg) < 0) {
+			fuse_reply_err(req, errno);
+			return;
+		}
+		IOCTL_RETURN(0, NULL);
 
 	default:
 		printf("%s %x\n", __func__, signed_cmd);
