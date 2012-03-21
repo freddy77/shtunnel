@@ -209,8 +209,8 @@ void cuse_init(void)
 				.dev_info_argc = 1, .dev_info_argv = &bufp,
 				.flags = CUSE_UNRESTRICTED_IOCTL };
 	pthread_t cuse_my_thread;
-	int my_argc = 2;
-	char *my_argv[] = { "test", "-f" };
+	char *my_argv[] = { "classifier", "-f", "-s" };
+	int my_argc = sizeof(my_argv)/sizeof(my_argv[0]);
 
 	sprintf(devname, "/dev/classifier%d", (int) getpid());
 	snprintf(name_buf, sizeof(name_buf), "DEVNAME=%s", devname+5);
