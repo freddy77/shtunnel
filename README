@@ -27,3 +27,10 @@ Classifier utility was written to distinguish single output/error streams.
 I find it useful for scripting of support multiple stream even when
 only a single stream is given.
 
+Currently I use mainly classifier utility, more than original shtunnel.
+
+To use CUSE you have to load cuse module and make classifier suid root (or
+launch as root but I prefer the first, permission are lost after
+initialization).
+
+With --no-buffering can be used even to run interactive bash.
