@@ -1,3 +1,7 @@
+Version 0.1.13 - 2012-04-26
+	* add --times option to print time
+	* add note.txt to distribution
+
 Version 0.1.12 - 2012-02-27
 	* pass SIGINT to child in classifier
 	* use CUSE if possible in classifier

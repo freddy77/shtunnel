@@ -14,7 +14,7 @@ AC_INIT(src/shtunnel.c)
 AC_PREREQ(2.53)
 AC_REVISION($Revision: 1.17 $)
 
-AM_INIT_AUTOMAKE(shtunnel, 0.1.12)
+AM_INIT_AUTOMAKE(shtunnel, 0.1.13)
 AM_CONFIG_HEADER(src/config.h)
 
 # ------------------------------------------------------------
