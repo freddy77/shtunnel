@@ -84,6 +84,7 @@ typedef struct {
 } pipe_t;
 
 static int cur_pipe = -1;
+static int no_buffering = 0;
 
 void
 handle_buf(const char *buf, size_t len, int pipe_num)
@@ -182,6 +183,8 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 
 		p = next;
 	}
+	if (no_buffering)
+		fflush(stdout);
 }
 
 static int
@@ -276,7 +279,7 @@ main(int argc, char **argv)
 			out_type = OutType_Html;
 			out_html_full = 1;
 		} else if (strcmp(argv[1], "--no-buffering") == 0) {
-			setbuf(stdout, NULL);
+			no_buffering = 1;
 		} else if (strcmp(argv[1], "--") == 0) {
 			/* stop parsing argument */
 			--argc;
