@@ -45,7 +45,7 @@ void error(const char *msg, ...)
 	fprintf(stderr, "error: ");
 
 	va_start(ap, msg);
-	vfprintf (stderr, msg, ap);
+	vfprintf(stderr, msg, ap);
 	va_end(ap);
 
 	fprintf(stderr, "\n");
@@ -93,11 +93,11 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 
 	if (cur_pipe != pipe_num && cur_pipe != -1) {
 		if (out_type == OutType_Normal)
-			fprintf(stdout, "\n+");
+			printf("\n+");
 		else if (out_type == OutType_Color && cur_pipe >= 2)
-			fprintf(stdout, "\x1b[00m");
+			printf("\x1b[00m");
 		else if (out_type == OutType_Html && cur_pipe >= 2)
-			fprintf(stdout, "</span>");
+			printf("</span>");
 		cur_pipe = -1;
 	}
 
@@ -125,16 +125,16 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 			switch (out_type) {
 			case OutType_Color:
 				if (pipe_num >= 2)
-					fprintf(stdout, "\x1b[00;3%dm", ((pipe_num - 2) % 7) + 1);
+					printf("\x1b[00;3%dm", ((pipe_num - 2) % 7) + 1);
 				break;
 			case OutType_Normal:
-				fprintf(stdout, "%d:", pipe_num);
+				printf("%d:", pipe_num);
 				break;
 			case OutType_Html:
 				if (pipe_num == 2)
-					fprintf(stdout, "<span class=\"error\">");
+					printf("<span class=\"error\">");
 				else if (pipe_num > 1)
-					fprintf(stdout, "<span class=\"stream%d\">", pipe_num);
+					printf("<span class=\"stream%d\">", pipe_num);
 				break;
 			}
 			cur_pipe = pipe_num;
@@ -145,16 +145,16 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 			for (; p != nl; ++p)
 				switch (*p) {
 				case '<':
-					fprintf(stdout, "&lt;");
+					printf("&lt;");
 					break;
 				case '>':
-					fprintf(stdout, "&gt;");
+					printf("&gt;");
 					break;
 				case '"':
-					fprintf(stdout, "&quot;");
+					printf("&quot;");
 					break;
 				case '&':
-					fprintf(stdout, "&amp;");
+					printf("&amp;");
 					break;
 				default:
 					putc(*p, stdout);
@@ -170,12 +170,12 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 		switch (out_type) {
 		case OutType_Color:
 			if (pipe_num >= 2)
-				fprintf(stdout, "\x1b[00m");
+				printf("\x1b[00m");
 		case OutType_Normal:
 			break;
 		case OutType_Html:
 			if (pipe_num > 1)
-				fprintf(stdout, "</span>");
+				printf("</span>");
 			break;
 		}
 		fwrite(nl, 1, next - nl, stdout);
@@ -382,12 +382,12 @@ main(int argc, char **argv)
 			"gray"
 		};
 
-		fprintf(stdout, "<html>\n"
+		printf("<html>\n"
 			"<style>\n"
 			".error { color: red }\n");
 		for (i = 1; i < 7 && (i + 2) <= num_pipe; ++i)
-			fprintf(stdout, ".stream%d { color: %s }\n", i+2, colors[i]);
-		fprintf(stdout, "</style>\n<body>\n<pre>");
+			printf(".stream%d { color: %s }\n", i+2, colors[i]);
+		printf("</style>\n<body>\n<pre>");
 	}
 
 	/* wait data from our child */
@@ -427,10 +427,10 @@ main(int argc, char **argv)
 	while ((pid = wait(&ret)) <= 0 && errno == EINTR);
 
 	if (out_type == OutType_Html && out_html_full)
-		fprintf(stdout, "</pre>\n</body>\n</html>\n");
+		printf("</pre>\n</body>\n</html>\n");
 
 	if (out_type == OutType_Color && cur_pipe >= 2)
-		fprintf(stdout, "\x1b[00m");
+		printf("\x1b[00m");
 
 	/* return corrent result */
 	if (WIFEXITED(ret))
