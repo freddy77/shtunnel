@@ -18,6 +18,7 @@
  */
 #include "includes.h"
 #include <assert.h>
+#include <sys/time.h>
 #include "sshpty.h"
 #include "cuse.h"
 
@@ -85,11 +86,15 @@ typedef struct {
 
 static int cur_pipe = -1;
 static int no_buffering = 0;
+static int times = 0;
 
 void
 handle_buf(const char *buf, size_t len, int pipe_num)
 {
 	const char *p, *pend;
+
+	if (out_type == OutType_Normal && times && cur_pipe >= 0)
+		cur_pipe = -2;
 
 	if (cur_pipe != pipe_num && cur_pipe != -1) {
 		if (out_type == OutType_Normal)
@@ -101,27 +106,33 @@ handle_buf(const char *buf, size_t len, int pipe_num)
 		cur_pipe = -1;
 	}
 
+	if (out_type == OutType_Normal && times) {
+		struct timeval tv;
+		gettimeofday(&tv, NULL);
+		printf("%ld.%03d ", (long) tv.tv_sec, (int) tv.tv_usec / 1000);
+	}
+
 	/* write all lines prefixed by handle */
 	p = buf;
-		pend = p + len;
-		for (;p != pend;) {
-			/*
-			 * in a string like
-			 * "pippo" "\n" "pluto...
-			 * p       nl   next
-			 */
-			const char *next;
-			const char *nl = (char *) memchr(p, '\n', pend - p);
-			if (!nl) {
-				next = nl = pend;
-			} else {
-				next = nl + 1;
-				if (nl > p && nl[-1] == '\r')
-					--nl;
-			}
+	pend = p + len;
+	for (;p != pend;) {
+		/*
+		 * in a string like
+		 * "pippo" "\n" "pluto...
+		 * p       nl   next
+		 */
+		const char *next;
+		const char *nl = (char *) memchr(p, '\n', pend - p);
+		if (!nl) {
+			next = nl = pend;
+		} else {
+			next = nl + 1;
+			if (nl > p && nl[-1] == '\r')
+				--nl;
+		}
 
-			/* start line */
-			if (cur_pipe != pipe_num) {
+		/* start line */
+		if (cur_pipe != pipe_num) {
 			switch (out_type) {
 			case OutType_Color:
 				if (pipe_num >= 2)
@@ -280,10 +291,15 @@ main(int argc, char **argv)
 			out_html_full = 1;
 		} else if (strcmp(argv[1], "--no-buffering") == 0) {
 			no_buffering = 1;
+		} else if (strcmp(argv[1], "--times") == 0) {
+			times = 1;
 		} else if (strcmp(argv[1], "--") == 0) {
 			/* stop parsing argument */
 			--argc;
 			++argv;
+			break;
+		} else if (argv[1][0] == '-') {
+			ret = 1;
 			break;
 		} else
 			break;
@@ -300,7 +316,8 @@ main(int argc, char **argv)
 			"  --html-full     Use default header/footer in HTML output\n"
 			"  --no-buffering  Do not buffer output\n"
 			"  --timeout=xx    Timeout in seconds\n"
-			"  --byte-limit=xx Limit data to xx bytes", MAX_STREAMS);
+			"  --byte-limit=xx Limit data to xx bytes\n"
+			"  --times         Print times in normal output\n", MAX_STREAMS);
 
 	cuse_init();
 	for (i = 0; i < num_pipe; ++i) {
