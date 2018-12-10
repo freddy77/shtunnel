@@ -204,7 +204,7 @@ static void my_ioctl(fuse_req_t req, int signed_cmd, void *uarg,
 	}
 
 	case TCXONC:
-		if (ioctl(1, signed_cmd, (int) uarg) < 0) {
+		if (ioctl(1, signed_cmd, (int) (intptr_t) uarg) < 0) {
 			fuse_reply_err(req, errno);
 			return;
 		}
