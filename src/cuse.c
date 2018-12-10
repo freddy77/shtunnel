@@ -82,7 +82,9 @@ static pthread_cond_t initialized = PTHREAD_COND_INITIALIZER;
 
 static void my_init_done(void *userdata)
 {
+	pthread_mutex_lock(&mutex);
 	pthread_cond_signal(&initialized);
+	pthread_mutex_unlock(&mutex);
 }
 
 static int fd_id;
@@ -260,15 +262,17 @@ int cuse_init(void)
 	int null = open("/dev/null", O_WRONLY);
 	if (tmp_err >= 0 && null >= 0)
 		dup2(null, 2);
+	pthread_mutex_lock(&mutex);
 	se = cuse_lowlevel_setup(my_argc, my_argv, &ci, &my_ops, NULL, NULL);
 	if (tmp_err >= 0)
 		dup2(tmp_err, 2);
 	close(null);
 	close(tmp_err);
-	if (!se)
+	if (!se) {
+		pthread_mutex_unlock(&mutex);
 		return 0;
+	}
 
-	pthread_mutex_lock(&mutex);
 	pthread_create(&cuse_my_thread, NULL, cuse_worker, se);
 	pthread_cond_wait(&initialized, &mutex);
 	pthread_mutex_unlock(&mutex);
