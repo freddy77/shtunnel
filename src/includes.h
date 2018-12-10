@@ -142,6 +142,8 @@ void error(const char* msg, ...);
 void fatal(const char* msg, ...);
 void debug(const char* msg, ...);
 
+void handle_buf(const char *buf, size_t len, int pipe_num);
+
 #ifndef _PATH_TTY
 # define _PATH_TTY "/dev/tty"
 #endif

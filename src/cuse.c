@@ -112,8 +112,6 @@ static void my_read(fuse_req_t req, size_t size, off_t off,
 	fuse_reply_err(req, EINVAL);
 }
 
-void handle_buf(const char *buf, size_t len, int pipe_num);
-
 static void my_write(fuse_req_t req, const char *buf, size_t size, off_t off,
 		      struct fuse_file_info *fi)
 {
