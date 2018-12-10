@@ -241,7 +241,7 @@ static void *cuse_worker(void *arg)
 
 static char devname[64];
 
-void cuse_init(void)
+int cuse_init(void)
 {
 	struct fuse_session *se;
 	char name_buf[128];
@@ -266,12 +266,13 @@ void cuse_init(void)
 	close(null);
 	close(tmp_err);
 	if (!se)
-		return;
+		return 0;
 
 	pthread_mutex_lock(&mutex);
 	pthread_create(&cuse_my_thread, NULL, cuse_worker, se);
 	pthread_cond_wait(&initialized, &mutex);
 	pthread_mutex_unlock(&mutex);
+	return 1;
 }
 
 int cuse_allocate(int num, int *out_fd)

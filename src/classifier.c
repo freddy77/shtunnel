@@ -243,6 +243,21 @@ my_pipe(pipe_t *p, int num)
 	return res;
 }
 
+static int
+cuse_pipe(pipe_t *p, int num)
+{
+	int fd;
+
+	if (!cuse_allocate(num, &fd))
+		return -1;
+
+	fcntl(fd, F_SETFL, fcntl(fd,F_GETFL) | O_SYNC);
+	p->read = -1;
+	p->write = fd;
+	p->num = num;
+	return 0;
+}
+
 static void
 kill_child(int sig_num)
 {
@@ -261,9 +276,9 @@ main(int argc, char **argv)
 	int i, num_pipe = 2;
 	int max_fd = 0;
 	int ret;
-	int nice_res;
+	int nice_res = 0;
 	int timeout = -1;
-	pid_t pid;
+	int using_cuse = 0;
 	unsigned int byte_count = 0;
 	unsigned int byte_limit = 0;
 
@@ -319,14 +334,19 @@ main(int argc, char **argv)
 			"  --byte-limit=xx Limit data to xx bytes\n"
 			"  --times         Print times in normal output\n", MAX_STREAMS);
 
-	cuse_init();
-	for (i = 0; i < num_pipe; ++i) {
-		if (my_pipe(&pipes[i], i + 1))
-			fatal("allocating pipes");
+	for (i = 0; i < MAX_STREAMS; ++i)
+		pipes[i].read = pipes[i].write = -1;
+
+	using_cuse = cuse_init();
+	if (using_cuse) {
+		for (i = 0; i < num_pipe; ++i)
+			if (cuse_pipe(&pipes[i], i + 1))
+				fatal("allocating pipes");
 	}
 
-	/* try to increase our priority */	
-	nice_res = nice(-2);
+	/* try to increase our priority */
+	if (!using_cuse)
+		nice_res = nice(-2);
 
 #ifdef HAVE_GETRESUID
 	uid_t uid = getuid();
@@ -334,6 +354,12 @@ main(int argc, char **argv)
 	gid_t gid = getgid();
 	setresgid(gid, gid, gid);
 #endif
+
+	for (i = 0; i < num_pipe; ++i) {
+		if (pipes[i].write >= 0) continue;
+		if (my_pipe(&pipes[i], i + 1))
+			fatal("allocating pipes");
+	}
 
 	/* execute sub process */
 	child_pid = fork();
@@ -441,7 +467,7 @@ main(int argc, char **argv)
 	}
 
 	/* wait child exit */
-	while ((pid = wait(&ret)) <= 0 && errno == EINTR);
+	while (wait(&ret) <= 0 && errno == EINTR);
 
 	if (out_type == OutType_Html && out_html_full)
 		printf("</pre>\n</body>\n</html>\n");
