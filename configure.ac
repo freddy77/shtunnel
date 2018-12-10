@@ -10,11 +10,13 @@ dnl ------------------------------------------------------------
 # ------------------------------------------------------------
 # Initialization
 # ------------------------------------------------------------
-AC_INIT(src/shtunnel.c)
+AC_INIT([shtunnel], [0.1.13])
+AC_CONFIG_SRCDIR([src/shtunnel.c])
+AM_INIT_AUTOMAKE
+
 AC_PREREQ(2.53)
 AC_REVISION($Revision: 1.17 $)
 
-AM_INIT_AUTOMAKE(shtunnel, 0.1.13)
 AM_CONFIG_HEADER(src/config.h)
 
 # ------------------------------------------------------------
