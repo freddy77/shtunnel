@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# $Id: test.sh,v 1.5 2007-05-30 13:09:30 freddy Exp $
-
 # shtunnel --debug --shell ls xxx < /dev/null
 #  should work and not stall
 OUT=`./shtunnel --debug --shell ls shtunnel < /dev/null 2> /dev/null | if read -t 2 XXX; then

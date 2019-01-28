@@ -1,4 +1,3 @@
-# $Id: Makefile.am,v 1.5 2012-02-27 19:03:15 cvswrite Exp $
 bin_PROGRAMS	= shtunnel classifier
 TESTS		= test.sh
 
