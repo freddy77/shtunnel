@@ -3,7 +3,7 @@ dnl Process this file with autoconf to produce a configure script.
 # ------------------------------------------------------------
 # Initialization
 # ------------------------------------------------------------
-AC_INIT([shtunnel], [0.1.13])
+AC_INIT([shtunnel], [0.1.14])
 AC_CONFIG_SRCDIR([src/shtunnel.c])
 AM_INIT_AUTOMAKE
 

@@ -1,3 +1,7 @@
+Version 0.1.14 - 2019-01-28
+	* remove race condition using CUSE
+	* update project files
+
 Version 0.1.13 - 2012-04-26
 	* add --times option to print time
 	* add note.txt to distribution
