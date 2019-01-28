@@ -162,4 +162,4 @@ AC_MSG_RESULT(done)
 # ------------------------------------------------------------
 # Final output
 # ------------------------------------------------------------
-AC_OUTPUT(Makefile src/Makefile)
+AC_OUTPUT(Makefile src/Makefile shtunnel.spec)

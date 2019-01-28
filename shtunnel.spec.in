@@ -1,0 +1,29 @@
+Summary:	shtunnel
+Name:		shtunnel
+Version:	@VERSION@
+Release:	1
+License:	GPL
+Url:		https://github.com/freddy77/shtunnel
+Source0:	%{name}-%{version}.tar.gz
+
+%description
+Provides -L and -R like options in ssh(1) for normal shell.
+
+%prep
+%setup -q
+
+%build
+%configure
+
+%install
+rm -rf $RPM_BUILD_ROOT
+%make_install
+
+%clean
+rm -rf $RPM_BUILD_ROOT
+
+%files
+%defattr(-,root,root,-)
+%doc NEWS COPYING README
+%attr(4751, -, -) %{_bindir}/classifier
+%{_bindir}/shtunnel

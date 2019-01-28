@@ -15,5 +15,6 @@ COPYING
 INSTALL
 compile
 test-driver
+shtunnel.spec
 *.o
 *~
