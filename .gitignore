@@ -11,3 +11,9 @@ depcomp
 install-sh
 missing
 mkinstalldirs
+COPYING
+INSTALL
+compile
+test-driver
+*.o
+*~
